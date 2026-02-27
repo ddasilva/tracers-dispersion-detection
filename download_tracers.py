@@ -34,7 +34,7 @@ def main():
     ead_urls = get_ead_urls(args, start_date, end_date)
     out_dir = f'./data/{args.run_name}/ead/'
     
-    for ead_url in tqdm(aci_urls, desc='Downloading EAD data'):
+    for ead_url in tqdm(ead_urls, desc='Downloading EAD data'):
         download_file(ead_url, out_dir)
 
     print(f'Downloaded {len(ead_urls)} files')    
