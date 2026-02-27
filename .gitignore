@@ -1,0 +1,8 @@
+output
+case_files/*.json
+*.png
+data
+.ipynb_checkpoints
+__pycache__
+[#]*[#]
+*~
