@@ -9,4 +9,5 @@ dependencies:
   - pip
   - pip:
     - requests==2.32.5
+    - termcolor=3.3.0
     - tqdm==4.67.3
