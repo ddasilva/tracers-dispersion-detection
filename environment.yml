@@ -1,0 +1,12 @@
+name: tracers-dispersion
+channels:
+  - conda-forge
+  - nodefaults
+dependencies:
+  # Base python
+  - python==3.11
+  # Pip dependencies
+  - pip
+  - pip:
+    - requests==2.32.5
+    - tqdm==4.67.3
