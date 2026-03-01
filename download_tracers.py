@@ -26,7 +26,7 @@ def main():
     out_dir = f'./data/{args.run_name}/aci/'
     
     for aci_url in tqdm(aci_urls, desc='Downloading ACI data'):
-        download_file(aci_url, out_dir)
+        download_file(aci_url, out_dir, args)
 
     print(f'Downloaded {len(aci_urls)} files')
 
@@ -35,15 +35,15 @@ def main():
     out_dir = f'./data/{args.run_name}/ead/'
     
     for ead_url in tqdm(ead_urls, desc='Downloading EAD data'):
-        download_file(ead_url, out_dir)
+        download_file(ead_url, out_dir, args)
 
     print(f'Downloaded {len(ead_urls)} files')    
 
 
-def download_file(url, out_dir):
+def download_file(url, out_dir, args):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, os.path.basename(url))
-    response = requests.get(url)
+    response = requests.get(url, auth=(args.username, args.password))
     
     with open(out_path, 'wb') as fh:
         fh.write(response.content)
@@ -67,7 +67,9 @@ def get_ead_urls(args, start_date, end_date):
             filename = f'ts2_def_ead_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf'
             url = os.path.join(ead_dirlist_url, filename)
             ead_urls.append(url)
-            
+
+    ead_urls = list(set(ead_urls))
+    
     # Collect list of final urls
     return ead_urls
     
