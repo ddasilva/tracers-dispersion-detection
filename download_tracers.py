@@ -3,7 +3,8 @@ python download_tracers.py 12/01/2025 12/31/2025 myrun --satellite TS2`
 """
 
 import argparse
-from datetime import date
+from datetime import date, timedelta
+from dateutil.relativedelta import relativedelta
 import requests
 import os
 import re
@@ -21,32 +22,38 @@ def main():
     print('Start date:', start_date)
     print('End date:', end_date)
 
-    # Download ACI data
-    aci_urls = get_aci_or_ace_urls(args, 'aci', start_date, end_date)    
-    out_dir = f'./data/{args.run_name}/aci/'
-    
-    for aci_url in tqdm(aci_urls, desc='Downloading ACI data'):
-        download_file(aci_url, out_dir, args)
 
-    print(f'Downloaded {len(aci_urls)} files')
+    # Download ACI data
+    aci_urls = get_aci_urls(args, start_date, end_date)
+    download_data(aci_urls, f'./data/{args.run_name}/aci/', 'ACI data', args)
+
+    # Download ACE data
+    ace_urls = get_ace_urls(args, start_date, end_date)
+    download_data(ace_urls, f'./data/{args.run_name}/ace', 'ACE data', args)
 
     # Download EAD data
     ead_urls = get_ead_urls(args, start_date, end_date)
-    out_dir = f'./data/{args.run_name}/ead/'
-    
-    for ead_url in tqdm(ead_urls, desc='Downloading EAD data'):
-        download_file(ead_url, out_dir, args)
-
-    print(f'Downloaded {len(ead_urls)} files')    
+    download_data(ead_urls, f'./data/{args.run_name}/ead/', 'EAD data', args)
 
 
 def download_file(url, out_dir, args):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, os.path.basename(url))
     response = requests.get(url, auth=(args.username, args.password))
-    
+
     with open(out_path, 'wb') as fh:
         fh.write(response.content)
+
+
+def download_data(urls, out_dir, desc, args):
+    """Download a list of ``urls`` into ``out_dir`` with a progress bar.
+
+    ``desc`` is the text displayed in the tqdm bar.
+    """
+    os.makedirs(out_dir, exist_ok=True)
+    for url in tqdm(urls, desc=f'Downloading {desc}'):
+        download_file(url, out_dir, args)
+    print(f'Downloaded {len(urls)} files')
 
         
 def get_ead_urls(args, start_date, end_date):
@@ -74,25 +81,36 @@ def get_ead_urls(args, start_date, end_date):
     return ead_urls
     
         
-def get_aci_or_ace_urls(args, inst, start_date, end_date):
-    assert inst in ('ace', 'aci')
+def crawl_latest_files(args, dirlist_url, pattern, start_date, end_date):
+    """Return list of urls under ``dirlist_url`` matching ``pattern``.
 
-    print(f"Crawling {inst.upper()} directory list...")
-    
-    aci_dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f'ACI/ts2/l2/{inst}/ipd/')
-    response = requests.get(aci_dirlist_url, auth=(args.username, args.password))
-
-    pattern = 'ts2_l2_' + inst + '_ipd_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf'
+    Only the latest version for each date in the ``start_date``–``end_date``
+    interval is retained.  ``args`` is only used to provide authentication
+    for the requests call.
+    """
+    print(f"Crawling {dirlist_url}...")
+    response = requests.get(dirlist_url, auth=(args.username, args.password))
     pattern_matches = re.findall(pattern, response.text)
 
-    # Loop through files keeping track of the latest version encountered
-    latest_files_per_date = {}
-    latest_vers_per_date = {}
-    
+    latest_files_per_date: dict[date, str] = {}
+    latest_vers_per_date: dict[date, tuple[int, int, int]] = {}
+
     for (yyyy, mm, dd, ver_maj, ver_min, ver_rev) in pattern_matches:
         cur_date = date(int(yyyy), int(mm), int(dd))
         cur_vers = (int(ver_maj), int(ver_min), int(ver_rev))
-        filename = f'ts2_l2_aci_ipd_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf'
+
+        # filename must match the directory being crawled – caller constructs it
+        filename = os.path.basename(
+            dirlist_url.rstrip("/")
+        )  # placeholder, will be overridden below
+        # however, we just build the string again using the pieces
+        parts = dirlist_url.split("/")
+        if "aci" in dirlist_url.lower():
+            filename = f'ts2_l2_aci_ipd_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf'
+        elif "ace" in dirlist_url.lower():
+            filename = f'ts2_l2_ace_def_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf'
+        else:
+            filename = f'{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf'
 
         if cur_date not in latest_files_per_date:
             latest_files_per_date[cur_date] = filename
@@ -100,19 +118,41 @@ def get_aci_or_ace_urls(args, inst, start_date, end_date):
         elif cur_vers > latest_vers_per_date[cur_date]:
             latest_files_per_date[cur_date] = filename
             latest_vers_per_date[cur_date] = cur_vers
-        else:
-            #old file!
-            pass
 
-    # Build final list of urls
-    file_urls = []
-        
+    file_urls: list[str] = []
     for cur_date, filename in latest_files_per_date.items():
-        if cur_date >= start_date and cur_date <= end_date:
-            file_url = os.path.join(aci_dirlist_url, filename)
-            file_urls.append(file_url)
-        
+        if start_date <= cur_date <= end_date:
+            file_urls.append(os.path.join(dirlist_url, filename))
     return file_urls
+
+
+def get_aci_urls(args, start_date, end_date):
+    dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f'ACI/ts2/l2/aci/ipd/')
+    pattern = r'ts2_l2_aci_ipd_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf'
+    return crawl_latest_files(args, dirlist_url, pattern, start_date, end_date)
+
+
+        
+def get_ace_urls(args, start_date, end_date):
+    """Walk through the monthly ACE directories and collect urls.
+
+    The underlying logic is identical to the ACI helper, so we just call the
+    generic crawler for each month between ``start_date`` and ``end_date``.
+    """
+    ace_urls: list[str] = []
+    crawl_month = start_date
+    while crawl_month < end_date:
+        dirlist_url = os.path.join(
+            TRACERS_PORTAL_BASE_URL,
+            f'ACE/ts2/l2/{crawl_month.year}/{crawl_month.month}/',
+        )
+        pattern = r'ts2_l2_ace_def_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf'
+        ace_urls.extend(
+            crawl_latest_files(args, dirlist_url, pattern, start_date, end_date)
+        )
+        crawl_month += relativedelta(months=1)
+    return ace_urls
+
 
     
 def parse_date(date_str):
