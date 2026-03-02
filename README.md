@@ -39,10 +39,10 @@ Next, use these commands to download TRACERS and OMNIWeb data:
 
 Now, we will make a case file. This is an input file for the model to run. 
 
-`$ python make_case_file.py myrun 16`
+`$ python make_case_file.py myrun TS2`
 
 To run the code in single dispersion mode with the threshold of 0.8, use the following command. Higher threshold means less sensitive and less false positives, but you miss more real events (See da Silva JGR2022 for discussion).
 
-`$ python run_model.py -i case_files/myrun_F16.json --threshold 0.8`
+`$ python run_model.py -i case_files/myrun_TS2.json --threshold 0.8`
 
 Check the `output/` folder for plots and a CSV of detected events!
