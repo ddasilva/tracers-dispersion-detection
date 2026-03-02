@@ -92,6 +92,7 @@ class DetectionSettings:
 
     # Plotting options
     debug_plot: bool = False
+    debug_plot_force : bool = False
     plot_output_path: str = "plots/default"
 
     scoring_result: Optional[ScoringResults] = None
@@ -331,10 +332,9 @@ def test_detection(tracers_data, start_time, end_time, omni_data, detection_sett
     delta_t.append(delta_t[-1])  # assume last interval same as previous for simplicity
     total_score = np.sum(scoring_result.D * delta_t)
 
-    if total_score < detection_settings.score_threshold:
-        return None
+    detection = total_score > detection_settings.score_threshold
 
-    if detection_settings.debug_plot:
+    if (detection and detection_settings.debug_plot) or detection_settings.debug_plot_force:
         do_detection_plot(
             scoring_result.data_subset,
             start_time,
@@ -350,6 +350,10 @@ def test_detection(tracers_data, start_time, end_time, omni_data, detection_sett
             total_score,
             detection_settings,
         )
+
+    if not detection:
+        return None
+
     return DetectionResult(
         detection=True,
         score=total_score,
