@@ -77,12 +77,15 @@ def main():
 
         # Do a second pass on good events only (combined from overlapping)
         for _, row in df_match.iterrows():
+            # We use force_result=True because sometimes the union of overlapping detections
+            # is not a detection
             detection_result = lib_dasilva2026.test_detection(
                 tracers_data,
                 row.start_time,
                 row.end_time,
                 omni_data,
                 detection_settings,
+                force_result=True,
             )
 
             lib_plotting.write_plot(

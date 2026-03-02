@@ -333,7 +333,7 @@ def get_scoring_function(
 
 
 def test_detection(
-    tracers_data, start_time, end_time, omni_data, detection_settings, plot_force=False
+    tracers_data, start_time, end_time, omni_data, detection_settings, force_result=False
 ):
     subset_time = tracers_data.subset(start_time, end_time).aci_time
     if subset_time.size < 10:  # not enough data points to test
@@ -350,7 +350,7 @@ def test_detection(
 
     detection = total_score > detection_settings.score_threshold
 
-    if (detection and detection_settings.debug_plot) or plot_force:
+    if (detection and detection_settings.debug_plot):
         lib_plotting.write_debug_plot(
             tracers_data,
             scoring_result.data_subset,
@@ -369,7 +369,7 @@ def test_detection(
             detection_settings,
         )
 
-    if not detection:
+    if not detection and not force_result:
         return None
 
     return DetectionResult(
@@ -480,12 +480,25 @@ def load_omni(omniweb_files, silent=False):
         n_items.append(omniweb_cdf["proton_density"][:])
 
     # Merge arrays list of items
-    omniweb_fh = {}
-    omniweb_fh["time"] = np.concatenate(time_items)
-    omniweb_fh["time_d2n"] = date2num(omniweb_fh["time"])
-    omniweb_fh["Bx"] = np.concatenate(Bx_items)
-    omniweb_fh["By"] = np.concatenate(By_items)
-    omniweb_fh["Bz"] = np.concatenate(Bz_items)
-    omniweb_fh["n"] = np.concatenate(n_items)
+    omniweb_data = {}
+    omniweb_data["time"] = np.concatenate(time_items)
+    omniweb_data["time_d2n"] = date2num(omniweb_data["time"])
+    omniweb_data["Bx"] = np.concatenate(Bx_items)
+    omniweb_data["By"] = np.concatenate(By_items)
+    omniweb_data["Bz"] = np.concatenate(Bz_items)
+    omniweb_data["n"] = np.concatenate(n_items)
 
-    return omniweb_fh
+    # Interpolate over fill values
+    for key in omniweb_data:
+        if 'time' in key:
+            continue
+
+        mask = omniweb_data[key] > 999
+
+        omniweb_data[key][mask] = np.interp(
+            omniweb_data['time_d2n'][mask],  
+            omniweb_data['time_d2n'][~mask],
+            omniweb_data[key][~mask],
+        )
+
+    return omniweb_data

@@ -17,11 +17,7 @@ def write_plot(
     sat,
     plot_out_dir,
 ):
-    """Visualizes detection and writes plot to disk.
-
-    Args
-      TODO
-    """
+    """Visualizes detection and writes plot to disk."""
     start_time = detection_result.start_time
     end_time = detection_result.end_time
     Eic = detection_result.scoring_result.Eic
