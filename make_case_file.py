@@ -16,7 +16,6 @@ def main():
     parser.add_argument("run_name")
     parser.add_argument("satellite", help="TS1 or TS2")
     parser.add_argument("--reverse-effect", action="store_true")
-    parser.add_argument("--inverse-effect", action="store_true")
     args = parser.parse_args()
 
     if args.satellite.upper() not in ("TS1", "TS2"):
@@ -59,7 +58,6 @@ def main():
         "PLOT_OUTPUT": plot_output,
         "EVENT_OUTPUT": event_output,
         "REVERSE_EFFECT": reverse_effect,
-        "INVERSE_EFFECT": inverse_effect,
     }
 
     case_filename = f"case_files/{args.run_name}_{args.satellite.upper()}.json"

@@ -92,7 +92,6 @@ class DetectionSettings:
 
     # Plotting options
     debug_plot: bool = False
-    debug_plot_force : bool = False
     plot_output_path: str = "plots/default"
 
     scoring_result: Optional[ScoringResults] = None
@@ -185,31 +184,6 @@ def smooth_Eic(Eic, window_size=5):
     return Eic_clean
 
 
-def get_omni(tracers_data, padding=timedelta(minutes=5)):
-    # Download data on the fly ----------------------------------------------
-    interval = cdasws.timeinterval.TimeInterval(
-        tracers_data.time[0] - padding, tracers_data.time[-1] + padding
-    )
-    cdas = CdasWs()
-    dataset = "OMNI_HRO_1MIN"
-    var_names = cdas.get_variable_names(dataset)
-    status, data = cdas.get_data(dataset, var_names, interval)
-
-    mask = data["BX_GSE"] > 999
-    mask |= data["BY_GSM"] > 999
-    mask |= data["BZ_GSM"] > 999
-    data["time_d2n"] = date2num(data["Epoch"])
-
-    # Write data file if requested ----------------------
-    return {
-        "time": data["Epoch"][~mask],
-        "time_d2n": data["time_d2n"][~mask],
-        "Bx": data["BX_GSE"][~mask],
-        "By": data["BY_GSM"][~mask],
-        "Bz": data["BZ_GSM"][~mask],
-    }
-
-
 def load_data(aci_file, ead_file):
     if "ts1" in aci_file:
         key = "ts1"
@@ -296,7 +270,7 @@ def get_scoring_function(
     delta_t = np.array([dt.total_seconds() for dt in np.diff(data_subset.time)])
 
     D = np.diff(np.log10(Eic)) / delta_t
-    D *= -np.sign(np.diff(data_subset.mlat))
+    D *= -np.sign(np.diff(np.abs(data_subset.mlat)))
     D[~mask[:-1]] = 0
     D[Eic[:-1] > detection_settings.max_sheath_energy] = 0
 
@@ -318,7 +292,7 @@ def get_scoring_function(
     )
 
 
-def test_detection(tracers_data, start_time, end_time, omni_data, detection_settings):
+def test_detection(tracers_data, start_time, end_time, omni_data, detection_settings, plot_force=False):
     subset_time = tracers_data.subset(start_time, end_time).time
     if subset_time.size < 10:  # not enough data points to test
         return None
@@ -334,8 +308,9 @@ def test_detection(tracers_data, start_time, end_time, omni_data, detection_sett
 
     detection = total_score > detection_settings.score_threshold
 
-    if (detection and detection_settings.debug_plot) or detection_settings.debug_plot_force:
+    if (detection and detection_settings.debug_plot) or plot_force:
         do_detection_plot(
+            tracers_data,
             scoring_result.data_subset,
             start_time,
             end_time,
@@ -364,6 +339,7 @@ def test_detection(tracers_data, start_time, end_time, omni_data, detection_sett
 
 
 def do_detection_plot(
+    tracers_data,
     data_subset,
     start_time,
     end_time,
@@ -386,7 +362,12 @@ def do_detection_plot(
         f"\nIMF = <{Bx:.1f}, {By:.1f}, {Bz:.1f}> nT"
     )
 
-    _, im = plot_spect(data_subset, fig=fig, ax=axes[0])
+    padding = timedelta(seconds=10)
+    subset_with_padding = tracers_data.subset(
+        start_time - padding, end_time + padding
+    )
+
+    _, im = plot_spect(subset_with_padding, fig=fig, ax=axes[0])
     axes[0].plot(
         data_subset.time[D != 0],
         Eic[D != 0],
@@ -433,7 +414,8 @@ def do_detection_plot(
         cax = divider.append_axes("right", size="5%", pad=0.05)
         cb = fig.colorbar(im, cax=cax, orientation="vertical")
         cb.set_label(r"Summed Omni Flux")
-
+        ax.set_xlim(start_time - padding, end_time + padding)
+        
     fname = (
         f"TracersDispersionEvent_{start_time.isoformat()}_{end_time.isoformat()}.png"
     )
@@ -444,8 +426,7 @@ def do_detection_plot(
         fname,
     )
     fig.savefig(out_path, dpi=300)
-    # plt.close(fig)
-    # cprint(f'Wrote to {out_path}')
+    cprint(f'Wrote plot {out_path}', 'green')
 
 
 def walk_in_time(tracers_data, omni_data, detection_settings):
@@ -510,3 +491,49 @@ def walk_in_time(tracers_data, omni_data, detection_settings):
     )
 
     return df_match
+
+
+
+def load_omni(omniweb_files, silent=False):
+    """Read OMNIWeb files into a single dictionary.
+
+    Args
+      omniweb_files: string path to cdf files
+    Returns
+      dictionary mapping parameters to file
+    """
+    # Read OMNIWeb Data
+    # ------------------------------------------------------------------------------------
+    time_items = []
+    Bx_items = []
+    By_items = []
+    Bz_items = []
+    n_items = []
+    
+    for omniweb_file in sorted(omniweb_files):
+        # Open file
+        if not silent:
+            print(f'Loading {omniweb_file}')
+        omniweb_cdf = pycdf.CDF(omniweb_file)
+        epochs = omniweb_cdf['Epoch'][:]
+        
+        # Read the data
+        time_items.append(np.array([time.replace(tzinfo=None)
+                                 for time in epochs]))
+
+        Bx_items.append(omniweb_cdf['BX_GSE'][:])
+        By_items.append(omniweb_cdf['BY_GSM'][:])
+        Bz_items.append(omniweb_cdf['BZ_GSM'][:])
+        n_items.append(omniweb_cdf['proton_density'][:])
+
+    # Merge arrays list of items
+    omniweb_fh = {}
+    omniweb_fh['time'] = np.concatenate(time_items)
+    omniweb_fh['time_d2n'] = date2num(omniweb_fh['time'])
+    omniweb_fh['Bx'] = np.concatenate(Bx_items)
+    omniweb_fh['By'] = np.concatenate(By_items)
+    omniweb_fh['Bz'] = np.concatenate(Bz_items)
+    omniweb_fh['n'] = np.concatenate(n_items)
+    
+    return omniweb_fh
+
