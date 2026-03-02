@@ -3,7 +3,6 @@
 import argparse
 import json
 import os
-import copy
 
 from matplotlib import pyplot as plt
 import pandas as pd
@@ -38,6 +37,11 @@ def main():
         score_threshold=args.threshold,
         reverse_effect=case_file["REVERSE_EFFECT"],
         plot_output_path=case_file["PLOT_OUTPUT"],
+        bz_north_only=case_file["BZ_NORTH_ONLY"],
+        bz_south_only=case_file["BZ_SOUTH_ONLY"],
+        min_mlt=case_file["MIN_MLT"],
+        max_mlt=case_file["MAX_MLT"],
+        debug_plot=case_file["DEBUG_PLOT"],
     )
     omni_data = lib_dasilva2026.load_omni(case_file["OMNIWEB_FILES"])
     df_match_accum = []

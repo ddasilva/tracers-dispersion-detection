@@ -3,7 +3,7 @@ python download_tracers.py 12/01/2025 12/31/2025 myrun --satellite TS2`
 """
 
 import argparse
-from datetime import date, timedelta
+from datetime import date
 from dateutil.relativedelta import relativedelta
 import requests
 import os
@@ -55,7 +55,7 @@ def download_data(urls, out_dir, desc, args):
 
 
 def get_ead_urls(args, start_date, end_date):
-    print(f"Crawling EAD directory list...")
+    print("Crawling EAD directory list...")
 
     ead_dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, "SOC/TS2/ead/def/")
     response = requests.get(ead_dirlist_url, auth=(args.username, args.password))
@@ -128,7 +128,7 @@ def crawl_latest_files(args, dirlist_url, pattern, start_date, end_date):
 
 
 def get_aci_urls(args, start_date, end_date):
-    dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f"ACI/ts2/l2/aci/ipd/")
+    dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, "ACI/ts2/l2/aci/ipd/")
     pattern = r"ts2_l2_aci_ipd_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
     return crawl_latest_files(args, dirlist_url, pattern, start_date, end_date)
 

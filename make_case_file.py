@@ -1,5 +1,5 @@
 #!/usr/bin/env python
-"""Writes a case file for use with analyzing a storm.
+"""Writes a case file for use with analyzing an event or duration of time
 
 See also: run_model.py
 """
@@ -8,7 +8,10 @@ import argparse
 import glob
 import json
 import os
+
 from termcolor import cprint
+
+import lib_dasilva2026
 
 
 def main():
@@ -60,6 +63,11 @@ def main():
         "PLOT_OUTPUT": plot_output,
         "EVENT_OUTPUT": event_output,
         "REVERSE_EFFECT": args.reverse_effect,
+        "BZ_SOUTH_ONLY": False,
+        "BZ_NORTH_ONLY": False,
+        "MIN_MLT": lib_dasilva2026.MIN_MLT,
+        "MAX_MLT": lib_dasilva2026.MAX_MLT,
+        "DEBUG_PLOT": False,
     }
 
     case_filename = f"case_files/{args.run_name}_{args.satellite.upper()}.json"

@@ -1,31 +1,24 @@
 from dataclasses import dataclass
 from datetime import datetime, timedelta
-import os
 from typing import Optional
 
 import pandas as pd
 import intervaltree
-from matplotlib import pyplot as plt
-from matplotlib.colors import LogNorm
 from matplotlib.dates import date2num
 import numpy as np
 from spacepy import pycdf
-from mpl_toolkits.axes_grid1 import make_axes_locatable
-from cdasws import CdasWs
-import cdasws
-from termcolor import cprint
 from tqdm import tqdm
+
+import lib_plotting
 
 EIC_FRAC = 0.1
 CHAN_CUTOFF = 10
 
-SPECT_ACI_VMIN = 1e3
-SPECT_VMAX = 1e9
-
 MAX_SHEATH_ENERGY = 3.1e3
 MIN_ION_VALID_ENERGY = 50
 MIN_AVG_IFLUX_SHEATH = 10**6
-MIN_IFLUX_AT_EIC = 10**6
+MIN_AVG_EFLUX_SHEATH = 10**7
+MIN_IFLUX_AT_EIC = 10**6.5
 MIN_MLT = 6
 MAX_MLT = 18
 
@@ -36,6 +29,7 @@ class TRACERSData:
     aci_energies: np.ndarray
     aci_flux: np.ndarray
     aci_spect: np.ndarray
+    ace_spect_on_aci_times: np.ndarray
 
     ace_time: np.ndarray
     ace_energies: np.ndarray
@@ -57,6 +51,7 @@ class TRACERSData:
             aci_energies=self.aci_energies,
             aci_flux=self.aci_flux[i:j],
             aci_spect=self.aci_spect[i:j],
+            ace_spect_on_aci_times=self.ace_spect_on_aci_times[i:j],
             ace_time=self.ace_time[ii:jj],
             ace_energies=self.ace_energies,
             ace_flux=self.ace_flux[ii:jj],
@@ -67,9 +62,10 @@ class TRACERSData:
 
 
 @dataclass
-class ScoringResults:
+class ScoringResult:
     data_subset: TRACERSData
     iflux_avg_sheath: np.ndarray
+    eflux_avg_sheath: np.ndarray
     iflux_at_Eic: np.ndarray
     Eic: np.ndarray
     D: np.ndarray
@@ -88,6 +84,7 @@ class DetectionSettings:
 
     # Flux thresholds
     min_avg_iflux_sheath: float = MIN_AVG_IFLUX_SHEATH
+    min_avg_eflux_sheath: float = MIN_AVG_EFLUX_SHEATH
     min_iflux_at_eic: float = MIN_IFLUX_AT_EIC
 
     # Eic calculation parameters
@@ -96,8 +93,6 @@ class DetectionSettings:
 
     # Spectrogram display parameters
     chan_cutoff: int = CHAN_CUTOFF
-    spect_vmin: float = SPECT_ACI_VMIN
-    spect_vmax: float = SPECT_VMAX
 
     # Scoring function parameters
     score_threshold: float = 0.1
@@ -115,44 +110,19 @@ class DetectionSettings:
     debug_plot: bool = False
     plot_output_path: str = "plots/default"
 
-    scoring_result: Optional[ScoringResults] = None
+    scoring_result: Optional[ScoringResult] = None
 
 
 @dataclass
 class DetectionResult:
     detection: bool
     score: float
-    scoring_result: ScoringResults
+    scoring_result: ScoringResult
     start_time: datetime
     end_time: datetime
     Bx: float
     By: float
     Bz: float
-
-
-def plot_spect(tracers_data, fig=None, ax=None, cmap=None, cbar=False):
-    if ax is None:
-        fig = plt.figure(figsize=(12, 4))
-        ax = plt.gca()
-
-    im = ax.pcolor(
-        tracers_data.aci_time,
-        tracers_data.aci_energies[CHAN_CUTOFF:],
-        tracers_data.aci_spect.T[CHAN_CUTOFF:],
-        norm=LogNorm(vmin=SPECT_ACI_VMIN, vmax=SPECT_VMAX),
-        cmap=cmap,
-    )
-
-    ax.set_yscale("log")
-    ax.set_ylabel("Energy (eV)")
-
-    if cbar:
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        cb = fig.colorbar(im, cax=cax, orientation="vertical")
-        cb.set_label(r"Summed Omni Flux")
-
-    return ax, im
 
 
 def find_Eic(
@@ -232,6 +202,15 @@ def load_tracers_data(aci_file, ace_file, ead_file):
     ace_time = cdf["Epoch"][:]
     cdf.close()
 
+    # Resample ACE spectrogram onto ACI timestamps
+    ace_time_d2m = date2num(ace_time)
+    aci_time_d2m = date2num(aci_time)
+    ace_spect_on_aci_times = np.zeros((len(aci_time), ace_spect.shape[1]))
+    for i in range(ace_spect.shape[1]):
+        ace_spect_on_aci_times[:, i] = np.interp(
+            x=aci_time_d2m, xp=ace_time_d2m, fp=ace_spect[:, i]
+        )
+
     # Load MLat from ACI file and interpolate to same times as ACI
     cdf = pycdf.CDF(ead_file)
     ead_time = cdf["Epoch"][:]
@@ -254,6 +233,7 @@ def load_tracers_data(aci_file, ace_file, ead_file):
         ace_energies=ace_energies,
         ace_flux=ace_flux,
         ace_spect=ace_spect,
+        ace_spect_on_aci_times=ace_spect_on_aci_times,
     )
 
 
@@ -292,6 +272,10 @@ def get_scoring_function(
     )
     ch_j = tracers_data.aci_energies.searchsorted(detection_settings.max_sheath_energy)
     iflux_avg_sheath = np.mean(data_subset.aci_spect.T[ch_i:ch_j, :], axis=0)
+
+    ch_j = tracers_data.ace_energies.searchsorted(detection_settings.max_sheath_energy)
+    eflux_avg_sheath = np.mean(data_subset.ace_spect_on_aci_times.T[:ch_j, :], axis=0)
+
     iflux_at_Eic = get_iflux_at_Eic(data_subset, Eic)
 
     # Lookup magnetic field at this current time
@@ -303,14 +287,21 @@ def get_scoring_function(
 
     # Build masks that zero out scoring function
     iflux_avg_sheath_mask = iflux_avg_sheath > detection_settings.min_avg_iflux_sheath
+    eflux_avg_sheath_mask = eflux_avg_sheath > detection_settings.min_avg_eflux_sheath
     iflux_at_Eic_mask = iflux_at_Eic > detection_settings.min_iflux_at_eic
     Eic_in_sheath_mask = Eic < detection_settings.max_sheath_energy
-    mask = iflux_avg_sheath_mask & iflux_at_Eic_mask & Eic_in_sheath_mask
+    mask = (
+        iflux_avg_sheath_mask
+        & eflux_avg_sheath_mask
+        & iflux_at_Eic_mask
+        & Eic_in_sheath_mask
+    )
 
     if detection_settings.bz_south_only:
         mask &= Bz < 0
     elif detection_settings.bz_north_only:
         mask &= Bz > 0
+
     mask &= data_subset.mlt > detection_settings.min_mlt  # dayside only
     mask &= data_subset.mlt < detection_settings.max_mlt
 
@@ -328,9 +319,10 @@ def get_scoring_function(
     D[np.isnan(D)] = 0
     D = np.array(D.tolist() + [0])
 
-    return ScoringResults(
+    return ScoringResult(
         data_subset=data_subset,
         iflux_avg_sheath=iflux_avg_sheath,
+        eflux_avg_sheath=eflux_avg_sheath,
         iflux_at_Eic=iflux_at_Eic,
         Eic=Eic,
         D=D,
@@ -359,12 +351,13 @@ def test_detection(
     detection = total_score > detection_settings.score_threshold
 
     if (detection and detection_settings.debug_plot) or plot_force:
-        do_detection_plot(
+        lib_plotting.write_debug_plot(
             tracers_data,
             scoring_result.data_subset,
             start_time,
             end_time,
             scoring_result.iflux_avg_sheath,
+            scoring_result.eflux_avg_sheath,
             scoring_result.iflux_at_Eic,
             scoring_result.Eic,
             scoring_result.D,
@@ -389,95 +382,6 @@ def test_detection(
         By=scoring_result.By,
         Bz=scoring_result.Bz,
     )
-
-
-def do_detection_plot(
-    tracers_data,
-    data_subset,
-    start_time,
-    end_time,
-    iflux_avg_sheath,
-    iflux_at_Eic,
-    Eic,
-    D,
-    delta_t,
-    Bx,
-    By,
-    Bz,
-    total_score,
-    detection_settings,
-):
-    fig, axes = plt.subplots(4, 1, figsize=(8, 8), sharex=True)
-
-    fig.suptitle(
-        f"Dispersion Event: {start_time.strftime('%Y-%m-%d')},  "
-        f"{start_time.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')} UT"
-        f"\nIMF = <{Bx:.1f}, {By:.1f}, {Bz:.1f}> nT"
-    )
-
-    padding = timedelta(seconds=10)
-    subset_with_padding = tracers_data.subset(start_time - padding, end_time + padding)
-
-    _, im = plot_spect(subset_with_padding, fig=fig, ax=axes[0])
-    axes[0].plot(
-        data_subset.aci_time[D != 0],
-        Eic[D != 0],
-        "b-",
-    )
-    axes[0].axhline(
-        detection_settings.max_sheath_energy,
-        color="k",
-        linestyle="dashed",
-        # label='Max Energy\nSheath Origin',
-    )
-    axes[0].set_title("Ion Spectrogram from ACI")
-
-    axes[1].plot(data_subset.aci_time, iflux_avg_sheath, color="C2")
-    axes[1].set_title("Average Ion Flux in Energy Range for Magnetosheath Origin")
-    axes[1].set_ylabel("Averaged Omni Flux")
-    axes[1].axhline(
-        detection_settings.min_avg_iflux_sheath,
-        color="k",
-        linestyle="dashed",
-        label="Threshold",
-    )
-
-    axes[2].plot(data_subset.aci_time, iflux_at_Eic, color="C3")
-    axes[2].set_title("Ion Flux at $E_{ic}$")
-    axes[2].set_ylabel("Omni Flux")
-    axes[2].axhline(
-        detection_settings.min_iflux_at_eic,
-        color="k",
-        linestyle="dashed",
-        label="Threshold",
-    )
-
-    label = r"D(T) : Scoring Function | "
-    label += f"Total Score: {total_score:.2f}"
-    axes[3].fill_between(data_subset.aci_time, 0, D, label=label)
-    axes[3].set_ylabel("D(t)")
-
-    for i, ax in enumerate(axes):
-        if i > 0:
-            ax.legend(loc="upper right", facecolor="white", framealpha=1)
-            plt.grid(color="#ccc", linestyle="dashed", alpha=0.5)
-        divider = make_axes_locatable(ax)
-        cax = divider.append_axes("right", size="5%", pad=0.05)
-        cb = fig.colorbar(im, cax=cax, orientation="vertical")
-        cb.set_label(r"Summed Omni Flux")
-        ax.set_xlim(start_time - padding, end_time + padding)
-
-    fname = (
-        f"TracersDispersionEvent_{start_time.isoformat()}_{end_time.isoformat()}.png"
-    )
-
-    os.makedirs(detection_settings.plot_output_path, exist_ok=True)
-    out_path = os.path.join(
-        detection_settings.plot_output_path,
-        fname,
-    )
-    fig.savefig(out_path, dpi=300)
-    cprint(f"Wrote plot {out_path}", "green")
 
 
 def walk_in_time(tracers_data, omni_data, detection_settings):

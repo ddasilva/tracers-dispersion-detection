@@ -6,7 +6,6 @@ https://github.com/ddasilva/dmsp-dispersion-detection/blob/main/download_omniweb
 
 from dateutil.relativedelta import relativedelta
 from datetime import datetime, timedelta
-import subprocess
 import argparse
 import os
 from termcolor import cprint
