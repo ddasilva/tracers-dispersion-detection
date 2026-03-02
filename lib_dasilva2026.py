@@ -26,7 +26,8 @@ MAX_SHEATH_ENERGY = 3.1e3
 MIN_ION_VALID_ENERGY = 50
 MIN_AVG_IFLUX_SHEATH = 10**6
 MIN_IFLUX_AT_EIC = 10**6
-
+MIN_MLT = 6
+MAX_MLT = 18
 
 @dataclass
 class TRACERSData:
@@ -35,6 +36,7 @@ class TRACERSData:
     flux: np.ndarray
     spect: np.ndarray
     mlat: np.array
+    mlt: np.array
 
     def subset(self, stime, etime):
         i = np.searchsorted(self.time, stime)
@@ -46,6 +48,7 @@ class TRACERSData:
             flux=self.flux[i:j],
             spect=self.spect[i:j],
             mlat=self.mlat[i:j],
+            mlt=self.mlt[i:j],
         )
 
 
@@ -89,6 +92,10 @@ class DetectionSettings:
     # IMF (Interplanetary Magnetic Field) constraints
     bz_south_only: bool = False
     bz_north_only: bool = False
+
+    # MLT (Magnetic Local Time) constraints
+    min_mlt: float = MIN_MLT  # 6 AM MLT
+    max_mlt: float = MAX_MLT # 6 PM MLT
 
     # Plotting options
     debug_plot: bool = False
@@ -202,9 +209,11 @@ def load_data(aci_file, ead_file):
     cdf = pycdf.CDF(ead_file)
     ead_time = cdf["Epoch"][:]
     ead_mlat = cdf[f"{key}_ead_mlat"][:]
+    ead_mlt = cdf[f"{key}_ead_mlt"][:]
     cdf.close()
 
     mlat = np.interp(x=date2num(time), xp=date2num(ead_time), fp=ead_mlat)
+    mlt = np.interp(x=date2num(time), xp=date2num(ead_time), fp=ead_mlt)
 
     # Return TRACERSData instance
     return TRACERSData(
@@ -213,6 +222,7 @@ def load_data(aci_file, ead_file):
         flux=flux,
         spect=spect,
         mlat=mlat,
+        mlt=mlt, 
     )
 
 
@@ -265,6 +275,7 @@ def get_scoring_function(
         mask &= Bz < 0
     elif detection_settings.bz_north_only:
         mask &= Bz > 0
+    mask &= (data_subset.mlt > detection_settings.min_mlt) & (data_subset.mlt < detection_settings.max_mlt) # dayside only
 
     # Calculate Scoring Function
     delta_t = np.array([dt.total_seconds() for dt in np.diff(data_subset.time)])
