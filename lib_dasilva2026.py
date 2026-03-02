@@ -1,0 +1,508 @@
+from dataclasses import dataclass
+from datetime import timedelta
+import os
+from typing import Optional
+
+import pandas as pd
+import intervaltree
+from matplotlib import pyplot as plt
+from matplotlib.colors import LogNorm
+from matplotlib.dates import date2num
+import numpy as np
+from spacepy import pycdf
+from mpl_toolkits.axes_grid1 import make_axes_locatable
+from cdasws import CdasWs
+import cdasws
+from termcolor import cprint
+from tqdm import tqdm
+
+EIC_FRAC = 0.1
+CHAN_CUTOFF = 10
+
+SPECT_VMIN = 1e3
+SPECT_VMAX = 1e9
+
+MAX_SHEATH_ENERGY = 3.1e3
+MIN_ION_VALID_ENERGY = 50
+MIN_AVG_IFLUX_SHEATH = 10**6
+MIN_IFLUX_AT_EIC = 10**6
+
+
+@dataclass
+class TRACERSData:
+    time: np.ndarray
+    energies: np.ndarray
+    flux: np.ndarray
+    spect: np.ndarray
+    mlat: np.array
+
+    def subset(self, stime, etime):
+        i = np.searchsorted(self.time, stime)
+        j = np.searchsorted(self.time, etime)
+
+        return TRACERSData(
+            time=self.time[i:j],
+            energies=self.energies,
+            flux=self.flux[i:j],
+            spect=self.spect[i:j],
+            mlat=self.mlat[i:j],
+        )
+
+
+@dataclass
+class ScoringResults:
+    data_subset: TRACERSData
+    iflux_avg_sheath: np.ndarray
+    iflux_at_Eic: np.ndarray
+    Eic: np.ndarray
+    D: np.ndarray
+    Bx: float
+    By: float
+    Bz: float
+
+
+@dataclass
+class DetectionSettings:
+    """Configuration settings for dispersion event detection."""
+
+    # Energy thresholds
+    min_ion_valid_energy: float = MIN_ION_VALID_ENERGY
+    max_sheath_energy: float = MAX_SHEATH_ENERGY
+
+    # Flux thresholds
+    min_avg_iflux_sheath: float = MIN_AVG_IFLUX_SHEATH
+    min_iflux_at_eic: float = MIN_IFLUX_AT_EIC
+
+    # Eic calculation parameters
+    Eic_frac: float = EIC_FRAC
+    Eic_window_size: int = 11
+
+    # Spectrogram display parameters
+    chan_cutoff: int = CHAN_CUTOFF
+    spect_vmin: float = SPECT_VMIN
+    spect_vmax: float = SPECT_VMAX
+
+    # Scoring function parameters
+    score_threshold: float = 0.1
+    reverse_effect: bool = False
+
+    # IMF (Interplanetary Magnetic Field) constraints
+    bz_south_only: bool = False
+    bz_north_only: bool = False
+
+    # Plotting options
+    debug_plot: bool = False
+    plot_output_path: str = "plots/default"
+
+    scoring_result: Optional[ScoringResults] = None
+
+
+@dataclass
+class DetectionResult:
+    detection: bool
+    score: float
+    Bx: float
+    By: float
+    Bz: float
+
+
+def plot_spect(tracers_data, fig=None, ax=None, cmap=None, cbar=False):
+    if ax is None:
+        fig = plt.figure(figsize=(12, 4))
+        ax = plt.gca()
+
+    im = ax.pcolor(
+        tracers_data.time,
+        tracers_data.energies[CHAN_CUTOFF:],
+        tracers_data.spect.T[CHAN_CUTOFF:],
+        norm=LogNorm(vmin=SPECT_VMIN, vmax=SPECT_VMAX),
+        cmap=cmap,
+    )
+
+    ax.set_yscale("log")
+    ax.set_ylabel("Energy (eV)")
+
+    if cbar:
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cb = fig.colorbar(im, cax=cax, orientation="vertical")
+        cb.set_label(r"Summed Omni Flux")
+
+    return ax, im
+
+
+def find_Eic(
+    tracers_data, smooth=True, Eic_frac=EIC_FRAC, window_size=5, chan_cutoff=CHAN_CUTOFF
+):
+    Eic = np.zeros(tracers_data.time.size)
+    Eic[:] = np.nan
+
+    for i in range(Eic.size):
+        idx_peak_energy = np.argmax(tracers_data.spect[i, chan_cutoff:]) + chan_cutoff
+        j = idx_peak_energy
+
+        while j > chan_cutoff:
+            if (
+                tracers_data.spect[i, j]
+                < Eic_frac * tracers_data.spect[i, idx_peak_energy]
+            ):
+                Eic[i] = tracers_data.energies[j]
+                break
+            j -= 1
+
+    if smooth:
+        Eic = smooth_Eic(Eic, window_size)
+
+    return Eic
+
+
+def smooth_Eic(Eic, window_size=5):
+    """Smooth Eic with a mask of points to include in moving average.
+
+    Args
+      Eic: array
+      window_size: integer, must be odd
+    Returns
+      Smoothed Eic array
+    """
+    assert (window_size is None) or (window_size % 2 == 1), "Window size must be odd"
+
+    Eic_clean = Eic.copy()
+
+    for i in range(Eic.size):
+        total = 0.0
+        count = 0
+
+        for di in range(-window_size // 2, window_size // 2 + 1):
+            if i + di > 0 and i + di < Eic.size:
+                total += Eic[i + di]
+                count += 1
+
+        if count > 0:  # else left as nan
+            Eic_clean[i] = total / count
+
+    return Eic_clean
+
+
+def get_omni(tracers_data, padding=timedelta(minutes=5)):
+    # Download data on the fly ----------------------------------------------
+    interval = cdasws.timeinterval.TimeInterval(
+        tracers_data.time[0] - padding, tracers_data.time[-1] + padding
+    )
+    cdas = CdasWs()
+    dataset = "OMNI_HRO_1MIN"
+    var_names = cdas.get_variable_names(dataset)
+    status, data = cdas.get_data(dataset, var_names, interval)
+
+    mask = data["BX_GSE"] > 999
+    mask |= data["BY_GSM"] > 999
+    mask |= data["BZ_GSM"] > 999
+    data["time_d2n"] = date2num(data["Epoch"])
+
+    # Write data file if requested ----------------------
+    return {
+        "time": data["Epoch"][~mask],
+        "time_d2n": data["time_d2n"][~mask],
+        "Bx": data["BX_GSE"][~mask],
+        "By": data["BY_GSM"][~mask],
+        "Bz": data["BZ_GSM"][~mask],
+    }
+
+
+def load_data(aci_file, ead_file):
+    if "ts1" in aci_file:
+        key = "ts1"
+    else:
+        key = "ts2"
+
+    # Load data from ACI file
+    cdf = pycdf.CDF(aci_file)
+    flux = cdf[f"{key}_l2_aci_tscs_def"][:]
+    spect = flux.sum(axis=-1)
+    energies = cdf[f"{key}_l2_aci_energy"][:]
+    time = cdf["Epoch"][:]
+    cdf.close()
+
+    # Load MLat from ACI file and interpolate to same times as ACI
+    cdf = pycdf.CDF(ead_file)
+    ead_time = cdf["Epoch"][:]
+    ead_mlat = cdf[f"{key}_ead_mlat"][:]
+    cdf.close()
+
+    mlat = np.interp(x=date2num(time), xp=date2num(ead_time), fp=ead_mlat)
+
+    # Return TRACERSData instance
+    return TRACERSData(
+        time=time,
+        energies=energies,
+        flux=flux,
+        spect=spect,
+        mlat=mlat,
+    )
+
+
+def get_iflux_at_Eic(data, Eic):
+    iflux_at_Eic = np.zeros_like(Eic)
+
+    for i in range(data.spect.shape[0]):
+        if np.isnan(Eic[i]):
+            iflux_at_Eic[i] = np.nan
+        else:
+            iflux_at_Eic[i] = data.spect[i, np.searchsorted(data.energies, Eic[i])]
+    return iflux_at_Eic
+
+
+def get_scoring_function(
+    tracers_data, omni_data, detection_settings, start_time, end_time
+):
+    # Subset data at provided times
+    data_subset = tracers_data.subset(start_time, end_time)
+
+    # Calculate terms and variables that go into the scoring function
+    Eic = find_Eic(
+        data_subset,
+        smooth=True,
+        window_size=detection_settings.Eic_window_size,
+        Eic_frac=detection_settings.Eic_frac,
+        chan_cutoff=detection_settings.chan_cutoff,
+    )
+
+    # Calculate variables that go into the scoring function
+    ch_i = tracers_data.energies.searchsorted(detection_settings.min_ion_valid_energy)
+    ch_j = tracers_data.energies.searchsorted(detection_settings.max_sheath_energy)
+    iflux_avg_sheath = np.mean(data_subset.spect.T[ch_i:ch_j, :], axis=0)
+    iflux_at_Eic = get_iflux_at_Eic(data_subset, Eic)
+
+    # Lookup magnetic field at this current time
+    time_curr = start_time + (end_time - start_time) / 2
+    time_curr_d2n = date2num(time_curr)
+    Bx = np.interp(time_curr_d2n, omni_data["time_d2n"], omni_data["Bx"])
+    By = np.interp(time_curr_d2n, omni_data["time_d2n"], omni_data["By"])
+    Bz = np.interp(time_curr_d2n, omni_data["time_d2n"], omni_data["Bz"])
+
+    # Build masks that zero out scoring function
+    iflux_avg_sheath_mask = iflux_avg_sheath > detection_settings.min_avg_iflux_sheath
+    iflux_at_Eic_mask = iflux_at_Eic > detection_settings.min_iflux_at_eic
+    Eic_in_sheath_mask = Eic < detection_settings.max_sheath_energy
+    mask = iflux_avg_sheath_mask & iflux_at_Eic_mask & Eic_in_sheath_mask
+
+    if detection_settings.bz_south_only:
+        mask &= Bz < 0
+    elif detection_settings.bz_north_only:
+        mask &= Bz > 0
+
+    # Calculate Scoring Function
+    delta_t = np.array([dt.total_seconds() for dt in np.diff(data_subset.time)])
+
+    D = np.diff(np.log10(Eic)) / delta_t
+    D *= -np.sign(np.diff(data_subset.mlat))
+    D[~mask[:-1]] = 0
+    D[Eic[:-1] > detection_settings.max_sheath_energy] = 0
+
+    if detection_settings.reverse_effect:
+        D *= -1
+
+    D[np.isnan(D)] = 0
+    D = np.array(D.tolist() + [0])
+
+    return ScoringResults(
+        data_subset=data_subset,
+        iflux_avg_sheath=iflux_avg_sheath,
+        iflux_at_Eic=iflux_at_Eic,
+        Eic=Eic,
+        D=D,
+        Bx=Bx,
+        By=By,
+        Bz=Bz,
+    )
+
+
+def test_detection(tracers_data, start_time, end_time, omni_data, detection_settings):
+    subset_time = tracers_data.subset(start_time, end_time).time
+    if subset_time.size < 10:  # not enough data points to test
+        return None
+
+    scoring_result = get_scoring_function(
+        tracers_data, omni_data, detection_settings, start_time, end_time
+    )
+
+    # Calculate total score and check for detection
+    delta_t = [dt.total_seconds() for dt in np.diff(subset_time)]
+    delta_t.append(delta_t[-1])  # assume last interval same as previous for simplicity
+    total_score = np.sum(scoring_result.D * delta_t)
+
+    if total_score < detection_settings.score_threshold:
+        return None
+
+    if detection_settings.debug_plot:
+        do_detection_plot(
+            scoring_result.data_subset,
+            start_time,
+            end_time,
+            scoring_result.iflux_avg_sheath,
+            scoring_result.iflux_at_Eic,
+            scoring_result.Eic,
+            scoring_result.D,
+            delta_t,
+            scoring_result.Bx,
+            scoring_result.By,
+            scoring_result.Bz,
+            total_score,
+            detection_settings,
+        )
+    return DetectionResult(
+        detection=True,
+        score=total_score,
+        Bx=scoring_result.Bx,
+        By=scoring_result.By,
+        Bz=scoring_result.Bz,
+    )
+
+
+def do_detection_plot(
+    data_subset,
+    start_time,
+    end_time,
+    iflux_avg_sheath,
+    iflux_at_Eic,
+    Eic,
+    D,
+    delta_t,
+    Bx,
+    By,
+    Bz,
+    total_score,
+    detection_settings,
+):
+    fig, axes = plt.subplots(4, 1, figsize=(8, 8), sharex=True)
+
+    fig.suptitle(
+        f"Dispersion Event: {start_time.strftime('%Y-%m-%d')},  "
+        f"{start_time.strftime('%H:%M:%S')} - {end_time.strftime('%H:%M:%S')} UT"
+        f"\nIMF = <{Bx:.1f}, {By:.1f}, {Bz:.1f}> nT"
+    )
+
+    _, im = plot_spect(data_subset, fig=fig, ax=axes[0])
+    axes[0].plot(
+        data_subset.time[D != 0],
+        Eic[D != 0],
+        "b-",
+    )
+    axes[0].axhline(
+        detection_settings.max_sheath_energy,
+        color="k",
+        linestyle="dashed",
+        # label='Max Energy\nSheath Origin',
+    )
+    axes[0].set_title("Ion Spectrogram from ACI")
+
+    axes[1].plot(data_subset.time, iflux_avg_sheath, color="C2")
+    axes[1].set_title("Average Ion Flux in Energy Range for Magnetosheath Origin")
+    axes[1].set_ylabel("Averaged Omni Flux")
+    axes[1].axhline(
+        detection_settings.min_avg_iflux_sheath,
+        color="k",
+        linestyle="dashed",
+        label="Threshold",
+    )
+
+    axes[2].plot(data_subset.time, iflux_at_Eic, color="C3")
+    axes[2].set_title("Ion Flux at $E_{ic}$")
+    axes[2].set_ylabel("Omni Flux")
+    axes[2].axhline(
+        detection_settings.min_iflux_at_eic,
+        color="k",
+        linestyle="dashed",
+        label="Threshold",
+    )
+
+    label = r"D(T) : Scoring Function | "
+    label += f"Total Score: {total_score:.2f}"
+    axes[3].fill_between(data_subset.time, 0, D, label=label)
+    axes[3].set_ylabel("D(t)")
+
+    for i, ax in enumerate(axes):
+        if i > 0:
+            ax.legend(loc="upper right", facecolor="white", framealpha=1)
+            plt.grid(color="#ccc", linestyle="dashed", alpha=0.5)
+        divider = make_axes_locatable(ax)
+        cax = divider.append_axes("right", size="5%", pad=0.05)
+        cb = fig.colorbar(im, cax=cax, orientation="vertical")
+        cb.set_label(r"Summed Omni Flux")
+
+    fname = (
+        f"TracersDispersionEvent_{start_time.isoformat()}_{end_time.isoformat()}.png"
+    )
+
+    os.makedirs(detection_settings.plot_output_path, exist_ok=True)
+    out_path = os.path.join(
+        detection_settings.plot_output_path,
+        fname,
+    )
+    fig.savefig(out_path, dpi=300)
+    # plt.close(fig)
+    # cprint(f'Wrote to {out_path}')
+
+
+def walk_in_time(tracers_data, omni_data, detection_settings):
+    # Loop over time in ingrements of `step`
+    matching_intervals = intervaltree.IntervalTree()
+    start_time = tracers_data.time.min().replace(microsecond=0)
+    end_time = tracers_data.time.max()
+    interval_duration = timedelta(seconds=30)
+    current_time = start_time
+
+    # Calculate number of intervals
+    step = timedelta(seconds=1)
+    num_intervals = int((end_time - start_time).total_seconds() / step.total_seconds())
+
+    for _ in tqdm(range(num_intervals), desc="Testing detections"):
+        interval_end = current_time + interval_duration
+
+        result = test_detection(
+            tracers_data, current_time, interval_end, omni_data, detection_settings
+        )
+
+        if result:  # if detection found
+            matching_intervals[current_time:interval_end] = {
+                "score": result.score,
+                "Bx": result.Bx,
+                "By": result.By,
+                "Bz": result.Bz,
+            }
+
+        current_time = current_time + step
+
+    # Merge overlapping intervals into common intervals. Retain the
+    # metadata attached to each.
+    def reducer(current, new_data):
+        for key in new_data:
+            if key not in current:
+                current[key] = set()
+            current[key].add(new_data[key])
+
+        return current
+
+    matching_intervals.merge_overlaps(data_reducer=reducer, data_initializer={})
+
+    # Convert to pandas dataframe for easy output to terminal of matching
+    # intervals and associated metadata.
+    df_match_rows = []
+
+    for interval in sorted(matching_intervals):
+        df_match_rows.append(
+            [
+                interval.begin,
+                interval.end,
+                np.mean(list(interval.data["Bx"])),
+                np.mean(list(interval.data["By"])),
+                np.mean(list(interval.data["Bz"])),
+                np.mean(list(interval.data["score"])),
+            ]
+        )
+
+    df_match = pd.DataFrame(
+        df_match_rows, columns=["start_time", "end_time", "Bx", "By", "Bz", "score"]
+    )
+
+    return df_match
