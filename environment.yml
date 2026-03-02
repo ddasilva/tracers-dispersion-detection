@@ -10,6 +10,7 @@ dependencies:
   - pip:
     - astropy==7.2.0
     - cdasws==1.8.15
+    - intervaltree=3.2.1
     - jupyterlab=4.5.5
     - pandas==3.0.1
     - requests==2.32.5
