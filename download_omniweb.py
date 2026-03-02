@@ -25,7 +25,7 @@ end_date = datetime(int(toks[2]), int(toks[0]), int(toks[1]))
 
 cur_date = start_date
 
-while cur_date < end_date:
+while cur_date <= end_date:
     month, year = cur_date.month, cur_date.year
     cprint(f"Downloading omniweb data for {month}/{year} from URL:", "green")
 
