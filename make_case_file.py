@@ -22,10 +22,6 @@ def main():
         print("Satellite argument must be either TS1 or TS2")
         return
 
-    # Edit here
-    reverse_effect = args.reverse_effect
-    inverse_effect = args.inverse_effect
-
     plot_output = f"output/{args.run_name}_F{args.satellite.upper()}/plots"
     event_output = f"output/{args.run_name}_F{args.satellite.upper()}/{args.run_name}_{args.satellite.upper()}.csv"
 
@@ -34,11 +30,16 @@ def main():
     omniweb_files = []
     omniweb_files.extend(glob.glob(omniweb_glob, recursive=True))
 
-    # Get DMSP files
+    # Get TRACERS files
     aci_glob = f"./data/{args.run_name}/aci/{args.satellite.lower()}_l2_aci_ipd_*.cdf"
     aci_files = []
     aci_files.extend(glob.glob(aci_glob, recursive=True))
     aci_files.sort()
+
+    ace_glob = f"./data/{args.run_name}/ace/{args.satellite.lower()}_l2_ace_def_*.cdf"
+    ace_files = []
+    ace_files.extend(glob.glob(ace_glob, recursive=True))
+    ace_files.sort()
 
     ead_glob = f"./data/{args.run_name}/ead/{args.satellite.lower()}_def_ead_*.cdf"
     ead_files = []
@@ -53,11 +54,12 @@ def main():
         "STORM_NAME": args.run_name,
         "SATELLITE": args.satellite.upper(),
         "ACI_FILES": aci_files,
+        "ACE_FILES": ace_files,
         "EAD_FILES": ead_files,
         "OMNIWEB_FILES": omniweb_files,
         "PLOT_OUTPUT": plot_output,
         "EVENT_OUTPUT": event_output,
-        "REVERSE_EFFECT": reverse_effect,
+        "REVERSE_EFFECT": args.reverse_effect,
     }
 
     case_filename = f"case_files/{args.run_name}_{args.satellite.upper()}.json"

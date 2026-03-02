@@ -1,5 +1,5 @@
 from dataclasses import dataclass
-from datetime import timedelta
+from datetime import datetime, timedelta
 import os
 from typing import Optional
 
@@ -19,7 +19,7 @@ from tqdm import tqdm
 EIC_FRAC = 0.1
 CHAN_CUTOFF = 10
 
-SPECT_VMIN = 1e3
+SPECT_ACI_VMIN = 1e3
 SPECT_VMAX = 1e9
 
 MAX_SHEATH_ENERGY = 3.1e3
@@ -29,24 +29,38 @@ MIN_IFLUX_AT_EIC = 10**6
 MIN_MLT = 6
 MAX_MLT = 18
 
+
 @dataclass
 class TRACERSData:
-    time: np.ndarray
-    energies: np.ndarray
-    flux: np.ndarray
-    spect: np.ndarray
-    mlat: np.array
-    mlt: np.array
+    aci_time: np.ndarray
+    aci_energies: np.ndarray
+    aci_flux: np.ndarray
+    aci_spect: np.ndarray
+
+    ace_time: np.ndarray
+    ace_energies: np.ndarray
+    ace_flux: np.ndarray
+    ace_spect: np.ndarray
+
+    mlat: np.ndarray  # interpolated to ACI time axis
+    mlt: np.ndarray
 
     def subset(self, stime, etime):
-        i = np.searchsorted(self.time, stime)
-        j = np.searchsorted(self.time, etime)
+        i = np.searchsorted(self.aci_time, stime)
+        j = np.searchsorted(self.aci_time, etime)
+
+        ii = np.searchsorted(self.ace_time, stime)
+        jj = np.searchsorted(self.ace_time, etime)
 
         return TRACERSData(
-            time=self.time[i:j],
-            energies=self.energies,
-            flux=self.flux[i:j],
-            spect=self.spect[i:j],
+            aci_time=self.aci_time[i:j],
+            aci_energies=self.aci_energies,
+            aci_flux=self.aci_flux[i:j],
+            aci_spect=self.aci_spect[i:j],
+            ace_time=self.ace_time[ii:jj],
+            ace_energies=self.ace_energies,
+            ace_flux=self.ace_flux[ii:jj],
+            ace_spect=self.ace_spect[ii:jj],
             mlat=self.mlat[i:j],
             mlt=self.mlt[i:j],
         )
@@ -82,7 +96,7 @@ class DetectionSettings:
 
     # Spectrogram display parameters
     chan_cutoff: int = CHAN_CUTOFF
-    spect_vmin: float = SPECT_VMIN
+    spect_vmin: float = SPECT_ACI_VMIN
     spect_vmax: float = SPECT_VMAX
 
     # Scoring function parameters
@@ -95,7 +109,7 @@ class DetectionSettings:
 
     # MLT (Magnetic Local Time) constraints
     min_mlt: float = MIN_MLT  # 6 AM MLT
-    max_mlt: float = MAX_MLT # 6 PM MLT
+    max_mlt: float = MAX_MLT  # 6 PM MLT
 
     # Plotting options
     debug_plot: bool = False
@@ -108,6 +122,9 @@ class DetectionSettings:
 class DetectionResult:
     detection: bool
     score: float
+    scoring_result: ScoringResults
+    start_time: datetime
+    end_time: datetime
     Bx: float
     By: float
     Bz: float
@@ -119,10 +136,10 @@ def plot_spect(tracers_data, fig=None, ax=None, cmap=None, cbar=False):
         ax = plt.gca()
 
     im = ax.pcolor(
-        tracers_data.time,
-        tracers_data.energies[CHAN_CUTOFF:],
-        tracers_data.spect.T[CHAN_CUTOFF:],
-        norm=LogNorm(vmin=SPECT_VMIN, vmax=SPECT_VMAX),
+        tracers_data.aci_time,
+        tracers_data.aci_energies[CHAN_CUTOFF:],
+        tracers_data.aci_spect.T[CHAN_CUTOFF:],
+        norm=LogNorm(vmin=SPECT_ACI_VMIN, vmax=SPECT_VMAX),
         cmap=cmap,
     )
 
@@ -141,19 +158,21 @@ def plot_spect(tracers_data, fig=None, ax=None, cmap=None, cbar=False):
 def find_Eic(
     tracers_data, smooth=True, Eic_frac=EIC_FRAC, window_size=5, chan_cutoff=CHAN_CUTOFF
 ):
-    Eic = np.zeros(tracers_data.time.size)
+    Eic = np.zeros(tracers_data.aci_time.size)
     Eic[:] = np.nan
 
     for i in range(Eic.size):
-        idx_peak_energy = np.argmax(tracers_data.spect[i, chan_cutoff:]) + chan_cutoff
+        idx_peak_energy = (
+            np.argmax(tracers_data.aci_spect[i, chan_cutoff:]) + chan_cutoff
+        )
         j = idx_peak_energy
 
         while j > chan_cutoff:
             if (
-                tracers_data.spect[i, j]
-                < Eic_frac * tracers_data.spect[i, idx_peak_energy]
+                tracers_data.aci_spect[i, j]
+                < Eic_frac * tracers_data.aci_spect[i, idx_peak_energy]
             ):
-                Eic[i] = tracers_data.energies[j]
+                Eic[i] = tracers_data.aci_energies[j]
                 break
             j -= 1
 
@@ -191,7 +210,7 @@ def smooth_Eic(Eic, window_size=5):
     return Eic_clean
 
 
-def load_data(aci_file, ead_file):
+def load_tracers_data(aci_file, ace_file, ead_file):
     if "ts1" in aci_file:
         key = "ts1"
     else:
@@ -199,10 +218,18 @@ def load_data(aci_file, ead_file):
 
     # Load data from ACI file
     cdf = pycdf.CDF(aci_file)
-    flux = cdf[f"{key}_l2_aci_tscs_def"][:]
-    spect = flux.sum(axis=-1)
-    energies = cdf[f"{key}_l2_aci_energy"][:]
-    time = cdf["Epoch"][:]
+    aci_flux = cdf[f"{key}_l2_aci_tscs_def"][:]
+    aci_spect = aci_flux.sum(axis=-1)
+    aci_energies = cdf[f"{key}_l2_aci_energy"][:]
+    aci_time = cdf["Epoch"][:]
+    cdf.close()
+
+    # Load data from ACE file
+    cdf = pycdf.CDF(ace_file)
+    ace_flux = cdf[f"{key}_l2_ace_def"][:]
+    ace_spect = ace_flux.sum(axis=-1)
+    ace_energies = cdf[f"{key}_l2_ace_energy"][:]
+    ace_time = cdf["Epoch"][:]
     cdf.close()
 
     # Load MLat from ACI file and interpolate to same times as ACI
@@ -212,28 +239,35 @@ def load_data(aci_file, ead_file):
     ead_mlt = cdf[f"{key}_ead_mlt"][:]
     cdf.close()
 
-    mlat = np.interp(x=date2num(time), xp=date2num(ead_time), fp=ead_mlat)
-    mlt = np.interp(x=date2num(time), xp=date2num(ead_time), fp=ead_mlt)
+    mlat = np.interp(x=date2num(aci_time), xp=date2num(ead_time), fp=ead_mlat)
+    mlt = np.interp(x=date2num(aci_time), xp=date2num(ead_time), fp=ead_mlt)
 
     # Return TRACERSData instance
     return TRACERSData(
-        time=time,
-        energies=energies,
-        flux=flux,
-        spect=spect,
+        aci_time=aci_time,
+        aci_energies=aci_energies,
+        aci_flux=aci_flux,
+        aci_spect=aci_spect,
         mlat=mlat,
-        mlt=mlt, 
+        mlt=mlt,
+        ace_time=ace_time,
+        ace_energies=ace_energies,
+        ace_flux=ace_flux,
+        ace_spect=ace_spect,
     )
 
 
 def get_iflux_at_Eic(data, Eic):
     iflux_at_Eic = np.zeros_like(Eic)
 
-    for i in range(data.spect.shape[0]):
+    for i in range(data.aci_spect.shape[0]):
         if np.isnan(Eic[i]):
             iflux_at_Eic[i] = np.nan
         else:
-            iflux_at_Eic[i] = data.spect[i, np.searchsorted(data.energies, Eic[i])]
+            iflux_at_Eic[i] = data.aci_spect[
+                i, np.searchsorted(data.aci_energies, Eic[i])
+            ]
+
     return iflux_at_Eic
 
 
@@ -253,9 +287,11 @@ def get_scoring_function(
     )
 
     # Calculate variables that go into the scoring function
-    ch_i = tracers_data.energies.searchsorted(detection_settings.min_ion_valid_energy)
-    ch_j = tracers_data.energies.searchsorted(detection_settings.max_sheath_energy)
-    iflux_avg_sheath = np.mean(data_subset.spect.T[ch_i:ch_j, :], axis=0)
+    ch_i = tracers_data.aci_energies.searchsorted(
+        detection_settings.min_ion_valid_energy
+    )
+    ch_j = tracers_data.aci_energies.searchsorted(detection_settings.max_sheath_energy)
+    iflux_avg_sheath = np.mean(data_subset.aci_spect.T[ch_i:ch_j, :], axis=0)
     iflux_at_Eic = get_iflux_at_Eic(data_subset, Eic)
 
     # Lookup magnetic field at this current time
@@ -275,10 +311,11 @@ def get_scoring_function(
         mask &= Bz < 0
     elif detection_settings.bz_north_only:
         mask &= Bz > 0
-    mask &= (data_subset.mlt > detection_settings.min_mlt) & (data_subset.mlt < detection_settings.max_mlt) # dayside only
+    mask &= data_subset.mlt > detection_settings.min_mlt  # dayside only
+    mask &= data_subset.mlt < detection_settings.max_mlt
 
     # Calculate Scoring Function
-    delta_t = np.array([dt.total_seconds() for dt in np.diff(data_subset.time)])
+    delta_t = np.array([dt.total_seconds() for dt in np.diff(data_subset.aci_time)])
 
     D = np.diff(np.log10(Eic)) / delta_t
     D *= -np.sign(np.diff(np.abs(data_subset.mlat)))
@@ -303,8 +340,10 @@ def get_scoring_function(
     )
 
 
-def test_detection(tracers_data, start_time, end_time, omni_data, detection_settings, plot_force=False):
-    subset_time = tracers_data.subset(start_time, end_time).time
+def test_detection(
+    tracers_data, start_time, end_time, omni_data, detection_settings, plot_force=False
+):
+    subset_time = tracers_data.subset(start_time, end_time).aci_time
     if subset_time.size < 10:  # not enough data points to test
         return None
 
@@ -342,6 +381,9 @@ def test_detection(tracers_data, start_time, end_time, omni_data, detection_sett
 
     return DetectionResult(
         detection=True,
+        start_time=start_time,
+        end_time=end_time,
+        scoring_result=scoring_result,
         score=total_score,
         Bx=scoring_result.Bx,
         By=scoring_result.By,
@@ -374,13 +416,11 @@ def do_detection_plot(
     )
 
     padding = timedelta(seconds=10)
-    subset_with_padding = tracers_data.subset(
-        start_time - padding, end_time + padding
-    )
+    subset_with_padding = tracers_data.subset(start_time - padding, end_time + padding)
 
     _, im = plot_spect(subset_with_padding, fig=fig, ax=axes[0])
     axes[0].plot(
-        data_subset.time[D != 0],
+        data_subset.aci_time[D != 0],
         Eic[D != 0],
         "b-",
     )
@@ -392,7 +432,7 @@ def do_detection_plot(
     )
     axes[0].set_title("Ion Spectrogram from ACI")
 
-    axes[1].plot(data_subset.time, iflux_avg_sheath, color="C2")
+    axes[1].plot(data_subset.aci_time, iflux_avg_sheath, color="C2")
     axes[1].set_title("Average Ion Flux in Energy Range for Magnetosheath Origin")
     axes[1].set_ylabel("Averaged Omni Flux")
     axes[1].axhline(
@@ -402,7 +442,7 @@ def do_detection_plot(
         label="Threshold",
     )
 
-    axes[2].plot(data_subset.time, iflux_at_Eic, color="C3")
+    axes[2].plot(data_subset.aci_time, iflux_at_Eic, color="C3")
     axes[2].set_title("Ion Flux at $E_{ic}$")
     axes[2].set_ylabel("Omni Flux")
     axes[2].axhline(
@@ -414,7 +454,7 @@ def do_detection_plot(
 
     label = r"D(T) : Scoring Function | "
     label += f"Total Score: {total_score:.2f}"
-    axes[3].fill_between(data_subset.time, 0, D, label=label)
+    axes[3].fill_between(data_subset.aci_time, 0, D, label=label)
     axes[3].set_ylabel("D(t)")
 
     for i, ax in enumerate(axes):
@@ -426,7 +466,7 @@ def do_detection_plot(
         cb = fig.colorbar(im, cax=cax, orientation="vertical")
         cb.set_label(r"Summed Omni Flux")
         ax.set_xlim(start_time - padding, end_time + padding)
-        
+
     fname = (
         f"TracersDispersionEvent_{start_time.isoformat()}_{end_time.isoformat()}.png"
     )
@@ -437,14 +477,14 @@ def do_detection_plot(
         fname,
     )
     fig.savefig(out_path, dpi=300)
-    cprint(f'Wrote plot {out_path}', 'green')
+    cprint(f"Wrote plot {out_path}", "green")
 
 
 def walk_in_time(tracers_data, omni_data, detection_settings):
     # Loop over time in ingrements of `step`
     matching_intervals = intervaltree.IntervalTree()
-    start_time = tracers_data.time.min().replace(microsecond=0)
-    end_time = tracers_data.time.max()
+    start_time = tracers_data.aci_time.min().replace(microsecond=0)
+    end_time = tracers_data.aci_time.max()
     interval_duration = timedelta(seconds=30)
     current_time = start_time
 
@@ -504,7 +544,6 @@ def walk_in_time(tracers_data, omni_data, detection_settings):
     return df_match
 
 
-
 def load_omni(omniweb_files, silent=False):
     """Read OMNIWeb files into a single dictionary.
 
@@ -520,31 +559,29 @@ def load_omni(omniweb_files, silent=False):
     By_items = []
     Bz_items = []
     n_items = []
-    
+
     for omniweb_file in sorted(omniweb_files):
         # Open file
         if not silent:
-            print(f'Loading {omniweb_file}')
+            print(f"Loading {omniweb_file}")
         omniweb_cdf = pycdf.CDF(omniweb_file)
-        epochs = omniweb_cdf['Epoch'][:]
-        
-        # Read the data
-        time_items.append(np.array([time.replace(tzinfo=None)
-                                 for time in epochs]))
+        epochs = omniweb_cdf["Epoch"][:]
 
-        Bx_items.append(omniweb_cdf['BX_GSE'][:])
-        By_items.append(omniweb_cdf['BY_GSM'][:])
-        Bz_items.append(omniweb_cdf['BZ_GSM'][:])
-        n_items.append(omniweb_cdf['proton_density'][:])
+        # Read the data
+        time_items.append(np.array([time.replace(tzinfo=None) for time in epochs]))
+
+        Bx_items.append(omniweb_cdf["BX_GSE"][:])
+        By_items.append(omniweb_cdf["BY_GSM"][:])
+        Bz_items.append(omniweb_cdf["BZ_GSM"][:])
+        n_items.append(omniweb_cdf["proton_density"][:])
 
     # Merge arrays list of items
     omniweb_fh = {}
-    omniweb_fh['time'] = np.concatenate(time_items)
-    omniweb_fh['time_d2n'] = date2num(omniweb_fh['time'])
-    omniweb_fh['Bx'] = np.concatenate(Bx_items)
-    omniweb_fh['By'] = np.concatenate(By_items)
-    omniweb_fh['Bz'] = np.concatenate(Bz_items)
-    omniweb_fh['n'] = np.concatenate(n_items)
-    
-    return omniweb_fh
+    omniweb_fh["time"] = np.concatenate(time_items)
+    omniweb_fh["time_d2n"] = date2num(omniweb_fh["time"])
+    omniweb_fh["Bx"] = np.concatenate(Bx_items)
+    omniweb_fh["By"] = np.concatenate(By_items)
+    omniweb_fh["Bz"] = np.concatenate(Bz_items)
+    omniweb_fh["n"] = np.concatenate(n_items)
 
+    return omniweb_fh
