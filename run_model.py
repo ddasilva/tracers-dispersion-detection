@@ -56,7 +56,9 @@ def main():
 
         # Find matching ACE file
         ace_file = find_matching_file(aci_file, case_file["ACE_FILES"], "ACE")
-
+        if ace_file is None:
+            continue
+        
         # Load TRACERS data from disk
         tracers_data = lib_dasilva2026.load_tracers_data(
             aci_file=aci_file, ead_file=ead_file, ace_file=ace_file
