@@ -70,7 +70,7 @@ def main():
         "DEBUG_PLOT": False,
     }
 
-    case_filename = f"case_files/{args.run_name}_{args.satellite.upper()}.json"
+    case_filename = f"case_files/{args.run_name}_{args.json"
     fh = open(case_filename, "w")
     json.dump(case_file, fh, indent=4)
     fh.write("\n")
