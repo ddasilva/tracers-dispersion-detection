@@ -165,7 +165,7 @@ def get_parser():
     parser.add_argument("start_date")
     parser.add_argument("end_date")
     parser.add_argument("run_name")
-    parser.add_argument("--satelite", required=True)
+    parser.add_argument("--satellite", required=True)
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
 
