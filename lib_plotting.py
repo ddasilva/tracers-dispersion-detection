@@ -5,6 +5,7 @@ import warnings
 from matplotlib import pyplot as plt
 from matplotlib.colors import LogNorm
 from matplotlib.dates import num2date
+import matplotlib.dates as mdates
 from mpl_toolkits.axes_grid1 import make_axes_locatable
 from termcolor import cprint
 
@@ -98,6 +99,8 @@ def write_plot(
     add_colorbar(fig, axes[2], im)
 
     # Fancy MLAT/MLT Xticks -----------------------------------
+    ax.xaxis.set_major_locator(mdates.SecondLocator(interval=30))
+
     add_multirow_xticks(ax, tracers_data)
 
     # Save Plot -----------------------------------------------
