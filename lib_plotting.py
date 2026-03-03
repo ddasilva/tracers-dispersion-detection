@@ -70,13 +70,16 @@ def write_plot(
 
     # Plot ACE Curve -------------------------------
     ax = axes[1]
-    im = ax.pcolor(
-        subset_with_padding.ace_time,
-        subset_with_padding.ace_energies,
-        subset_with_padding.ace_spect.T,
-        norm=LogNorm(vmin=1e5, vmax=1e11),
-        cmap="jet",
-    )
+
+    # Gaurd to prevent crash with ACE data oddity
+    if subset_with_padding.ace_spect.size > 0:
+        im = ax.pcolor(
+            subset_with_padding.ace_time,
+            subset_with_padding.ace_energies,
+            subset_with_padding.ace_spect.T,
+            norm=LogNorm(vmin=1e5, vmax=1e11),
+            cmap="jet",
+        )
     ax.set_yscale("log")
     ax.set_ylabel("Electron Energy (eV)")
     add_colorbar(fig, ax, im)
