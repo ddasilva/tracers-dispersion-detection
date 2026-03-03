@@ -385,7 +385,7 @@ def test_detection(
 
 
 def walk_in_time(tracers_data, omni_data, detection_settings):
-    # Loop over time in ingrements of `step`
+    # Loop over time in increments of `step`
     matching_intervals = intervaltree.IntervalTree()
     start_time = tracers_data.aci_time.min().replace(microsecond=0)
     end_time = tracers_data.aci_time.max()

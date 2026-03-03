@@ -102,7 +102,7 @@ def write_plot(
     add_colorbar(fig, axes[2], im)
 
     # Fancy MLAT/MLT Xticks -----------------------------------
-    ax.xaxis.set_major_locator(mdates.SecondLocator(interval=30))
+    ax.xaxis.set_major_locator(mdates.SecondLocator(interval=20))
 
     add_multirow_xticks(ax, tracers_data)
 
