@@ -144,7 +144,7 @@ def get_ace_urls(args, start_date, end_date):
     while crawl_month < end_date:
         dirlist_url = os.path.join(
             TRACERS_PORTAL_BASE_URL,
-            f"ACE/ts2/l2/{crawl_month.year}/{crawl_month.month}/",
+            f"ACE/ts2/l2/{crawl_month.year}/{crawl_month.month:02d}/",
         )
         pattern = r"ts2_l2_ace_def_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
         ace_urls.extend(
