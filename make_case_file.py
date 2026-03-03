@@ -25,8 +25,8 @@ def main():
         print("Satellite argument must be either TS1 or TS2")
         return
 
-    plot_output = f"output/{args.run_name}_F{args.satellite.upper()}/plots"
-    event_output = f"output/{args.run_name}_F{args.satellite.upper()}/{args.run_name}_{args.satellite.upper()}.csv"
+    plot_output = f"output/{args.run_name}/plots"
+    event_output = f"output/{args.run_name}/{args.run_name}.csv"
 
     # Get OMNIweb files
     omniweb_glob = "data/" + args.run_name + "/**/omni*.cdf"
@@ -70,7 +70,7 @@ def main():
         "DEBUG_PLOT": False,
     }
 
-    case_filename = f"case_files/{args.run_name}_{args.json"
+    case_filename = f"case_files/{args.run_name}.json"
     fh = open(case_filename, "w")
     json.dump(case_file, fh, indent=4)
     fh.write("\n")
