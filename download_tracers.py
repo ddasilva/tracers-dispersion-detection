@@ -57,10 +57,16 @@ def download_data(urls, out_dir, desc, args):
 def get_ead_urls(args, start_date, end_date):
     print("Crawling EAD directory list...")
 
-    ead_dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f"SOC/{args.satellite.upper()}/ead/def/")
-    response = requests.get(ead_dirlist_url, auth=(args.username, args.password))
+    if args.pred_ead:
+        tok = 'pred'
+        url_tok = 'predict'
+    else:
+        tok = 'def'
+        url_tok = 'def'
 
-    pattern = args.satellite.lower() + "_def_ead_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+    ead_dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f"SOC/{args.satellite.upper()}/ead/{url_tok}/")
+    response = requests.get(ead_dirlist_url, auth=(args.username, args.password))
+    pattern = args.satellite.lower() + "_" + tok + "_ead_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
     pattern_matches = re.findall(pattern, response.text)
     ead_urls = []
 
@@ -69,7 +75,7 @@ def get_ead_urls(args, start_date, end_date):
         cur_date = date(int(yyyy), int(mm), int(dd))
 
         if cur_date >= start_date and cur_date <= end_date:
-            filename = f"{args.satellite.lower()}_def_ead_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
+            filename = f"{args.satellite.lower()}_{tok}_ead_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
             url = os.path.join(ead_dirlist_url, filename)
             ead_urls.append(url)
 
@@ -168,6 +174,7 @@ def get_parser():
     parser.add_argument("--satellite", required=True)
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
+    parser.add_argument("--pred-ead", action="store_true", help="Download predicted EAD ephemeris")
 
     return parser
 

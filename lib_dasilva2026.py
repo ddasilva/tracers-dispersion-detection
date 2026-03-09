@@ -43,19 +43,32 @@ class TRACERSData:
         i = np.searchsorted(self.aci_time, stime)
         j = np.searchsorted(self.aci_time, etime)
 
-        ii = np.searchsorted(self.ace_time, stime)
-        jj = np.searchsorted(self.ace_time, etime)
+        if self.ace_time is None:
+            ace_spect_on_aci_times = None
+            ace_time = None
+            ace_energies = None
+            ace_flux = None
+            ace_spect = None
+        else:            
+            ii = np.searchsorted(self.ace_time, stime)
+            jj = np.searchsorted(self.ace_time, etime)
+
+            ace_spect_on_aci_times = self.ace_spect_on_aci_times[i:j]
+            ace_time = self.ace_time[ii:jj]
+            ace_energies = self.ace_energies
+            ace_flux = self.ace_flux[ii:jj]
+            ace_spect = self.ace_spect[ii:jj]
 
         return TRACERSData(
             aci_time=self.aci_time[i:j],
             aci_energies=self.aci_energies,
             aci_flux=self.aci_flux[i:j],
             aci_spect=self.aci_spect[i:j],
-            ace_spect_on_aci_times=self.ace_spect_on_aci_times[i:j],
-            ace_time=self.ace_time[ii:jj],
-            ace_energies=self.ace_energies,
-            ace_flux=self.ace_flux[ii:jj],
-            ace_spect=self.ace_spect[ii:jj],
+            ace_spect_on_aci_times=ace_spect_on_aci_times,
+            ace_time=ace_time,
+            ace_energies=ace_energies,
+            ace_flux=ace_flux,
+            ace_spect=ace_spect,
             mlat=self.mlat[i:j],
             mlt=self.mlt[i:j],
         )
@@ -103,8 +116,8 @@ class DetectionSettings:
     bz_north_only: bool = False
 
     # MLT (Magnetic Local Time) constraints
-    min_mlt: float = MIN_MLT  # 6 AM MLT
-    max_mlt: float = MAX_MLT  # 6 PM MLT
+    min_mlt: float = MIN_MLT  # 6 MLT
+    max_mlt: float = MAX_MLT  # 9 MLT
 
     # Plotting options
     debug_plot: bool = False
@@ -195,21 +208,28 @@ def load_tracers_data(aci_file, ace_file, ead_file):
     cdf.close()
 
     # Load data from ACE file
-    cdf = pycdf.CDF(ace_file)
-    ace_flux = cdf[f"{key}_l2_ace_def"][:]
-    ace_spect = ace_flux.sum(axis=-1)
-    ace_energies = cdf[f"{key}_l2_ace_energy"][:]
-    ace_time = cdf["Epoch"][:]
-    cdf.close()
+    if ace_file is None:
+        ace_time = None
+        ace_energies = None
+        ace_flux = None
+        ace_spect = None
+        ace_spect_on_aci_times = None
+    else:
+        cdf = pycdf.CDF(ace_file)
+        ace_flux = cdf[f"{key}_l2_ace_def"][:]
+        ace_spect = ace_flux.sum(axis=-1)
+        ace_energies = cdf[f"{key}_l2_ace_energy"][:]
+        ace_time = cdf["Epoch"][:]
+        cdf.close()
 
-    # Resample ACE spectrogram onto ACI timestamps
-    ace_time_d2m = date2num(ace_time)
-    aci_time_d2m = date2num(aci_time)
-    ace_spect_on_aci_times = np.zeros((len(aci_time), ace_spect.shape[1]))
-    for i in range(ace_spect.shape[1]):
-        ace_spect_on_aci_times[:, i] = np.interp(
-            x=aci_time_d2m, xp=ace_time_d2m, fp=ace_spect[:, i]
-        )
+        # Resample ACE spectrogram onto ACI timestamps
+        ace_time_d2m = date2num(ace_time)
+        aci_time_d2m = date2num(aci_time)
+        ace_spect_on_aci_times = np.zeros((len(aci_time), ace_spect.shape[1]))
+        for i in range(ace_spect.shape[1]):
+            ace_spect_on_aci_times[:, i] = np.interp(
+                x=aci_time_d2m, xp=ace_time_d2m, fp=ace_spect[:, i]
+            )
 
     # Load MLat from ACI file and interpolate to same times as ACI
     cdf = pycdf.CDF(ead_file)
@@ -273,8 +293,11 @@ def get_scoring_function(
     ch_j = tracers_data.aci_energies.searchsorted(detection_settings.max_sheath_energy)
     iflux_avg_sheath = np.mean(data_subset.aci_spect.T[ch_i:ch_j, :], axis=0)
 
-    ch_j = tracers_data.ace_energies.searchsorted(detection_settings.max_sheath_energy)
-    eflux_avg_sheath = np.mean(data_subset.ace_spect_on_aci_times.T[:ch_j, :], axis=0)
+    if tracers_data.ace_spect is not None:
+        ch_j = tracers_data.ace_energies.searchsorted(detection_settings.max_sheath_energy)
+        eflux_avg_sheath = np.mean(data_subset.ace_spect_on_aci_times.T[:ch_j, :], axis=0)
+    else:
+        eflux_avg_sheath = np.zeros_like(iflux_avg_sheath)
 
     iflux_at_Eic = get_iflux_at_Eic(data_subset, Eic)
 
@@ -287,7 +310,12 @@ def get_scoring_function(
 
     # Build masks that zero out scoring function
     iflux_avg_sheath_mask = iflux_avg_sheath > detection_settings.min_avg_iflux_sheath
-    eflux_avg_sheath_mask = eflux_avg_sheath > detection_settings.min_avg_eflux_sheath
+    
+    if tracers_data.ace_spect is not None:
+        eflux_avg_sheath_mask = eflux_avg_sheath > detection_settings.min_avg_eflux_sheath
+    else:
+        eflux_avg_sheath_mask = np.ones_like(iflux_avg_sheath_mask, dtype=bool)
+
     iflux_at_Eic_mask = iflux_at_Eic > detection_settings.min_iflux_at_eic
     Eic_in_sheath_mask = Eic < detection_settings.max_sheath_energy
     mask = (
@@ -333,7 +361,12 @@ def get_scoring_function(
 
 
 def test_detection(
-    tracers_data, start_time, end_time, omni_data, detection_settings, force_result=False
+    tracers_data,
+    start_time,
+    end_time,
+    omni_data,
+    detection_settings,
+    force_result=False,
 ):
     subset_time = tracers_data.subset(start_time, end_time).aci_time
     if subset_time.size < 10:  # not enough data points to test
@@ -350,7 +383,7 @@ def test_detection(
 
     detection = total_score > detection_settings.score_threshold
 
-    if (detection and detection_settings.debug_plot):
+    if detection and detection_settings.debug_plot:
         lib_plotting.write_debug_plot(
             tracers_data,
             scoring_result.data_subset,
@@ -490,14 +523,14 @@ def load_omni(omniweb_files, silent=False):
 
     # Interpolate over fill values
     for key in omniweb_data:
-        if 'time' in key:
+        if "time" in key:
             continue
 
         mask = omniweb_data[key] > 999
 
         omniweb_data[key][mask] = np.interp(
-            omniweb_data['time_d2n'][mask],  
-            omniweb_data['time_d2n'][~mask],
+            omniweb_data["time_d2n"][mask],
+            omniweb_data["time_d2n"][~mask],
             omniweb_data[key][~mask],
         )
 

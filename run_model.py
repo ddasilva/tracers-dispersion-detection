@@ -48,21 +48,12 @@ def main():
 
     for aci_file in case_file["ACI_FILES"]:
         cprint(f"Processing {aci_file}...", "cyan")
-
-        # Find matching EAD file
-        ead_file = find_matching_file(aci_file, case_file["EAD_FILES"], "EAD")
-        if ead_file is None:
-            continue
-
-        # Find matching ACE file
-        ace_file = find_matching_file(aci_file, case_file["ACE_FILES"], "ACE")
-        if ace_file is None:
-            continue
         
-        # Load TRACERS data from disk
-        tracers_data = lib_dasilva2026.load_tracers_data(
-            aci_file=aci_file, ead_file=ead_file, ace_file=ace_file
-        )
+        # Load tracers data
+        tracers_data = get_tracers_data(aci_file, case_file)
+        
+        if tracers_data is None:
+            continue
 
         # Walk in time
         df_match = lib_dasilva2026.walk_in_time(
@@ -123,5 +114,30 @@ def find_matching_file(aci_file, other_files, file_type):
     return other_files[0]
 
 
+def get_tracers_data(aci_file, case_file):
+    """Given an ACI file, find the matching ACE and EAD files and load the data."""
+    # Find matching EAD file
+    ead_file = find_matching_file(aci_file, case_file["EAD_FILES"], "EAD")
+    has_ead = (ead_file is not None)
+
+    # If skipping ACE and EAD file exists, load tracers data with ACE file set to None
+    if case_file['SKIP_ACE'] and has_ead:
+        tracers_data = lib_dasilva2026.load_tracers_data(
+            aci_file=aci_file, ead_file=ead_file, ace_file=None
+        )
+    elif has_ead:
+        # Load ACE file if exists and not skipping ACE
+        ace_file = find_matching_file(aci_file, case_file["ACE_FILES"], "ACE")
+        
+        tracers_data = lib_dasilva2026.load_tracers_data(
+            aci_file=aci_file, ead_file=ead_file, ace_file=ace_file
+        )
+    else:
+        tracers_data = None
+
+    return tracers_data
+
+
+    # Load TRACERS data from disk
 if __name__ == "__main__":
     main()

@@ -72,7 +72,7 @@ def write_plot(
     ax = axes[1]
 
     # Gaurd to prevent crash with ACE data oddity
-    if subset_with_padding.ace_spect.size > 0:
+    if subset_with_padding.ace_spect is not None and subset_with_padding.ace_spect.size > 0:
         im = ax.pcolor(
             subset_with_padding.ace_time,
             subset_with_padding.ace_energies,

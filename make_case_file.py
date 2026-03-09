@@ -19,6 +19,8 @@ def main():
     parser.add_argument("run_name")
     parser.add_argument("satellite", help="TS1 or TS2")
     parser.add_argument("--reverse-effect", action="store_true")
+    parser.add_argument('--skip-ace', action='store_true')
+    
     args = parser.parse_args()
 
     if args.satellite.upper() not in ("TS1", "TS2"):
@@ -39,12 +41,12 @@ def main():
     aci_files.extend(glob.glob(aci_glob, recursive=True))
     aci_files.sort()
 
-    ace_glob = f"./data/{args.run_name}/ace/{args.satellite.lower()}_l2_ace_def_*.cdf"
+    ace_glob = f"./data/{args.run_name}/ace/{args.satellite.lower()}_l2_ace_*_*.cdf"
     ace_files = []
     ace_files.extend(glob.glob(ace_glob, recursive=True))
     ace_files.sort()
 
-    ead_glob = f"./data/{args.run_name}/ead/{args.satellite.lower()}_def_ead_*.cdf"
+    ead_glob = f"./data/{args.run_name}/ead/{args.satellite.lower()}_*_ead_*.cdf"
     ead_files = []
     ead_files.extend(glob.glob(ead_glob, recursive=True))
     ead_files.sort()
@@ -67,6 +69,7 @@ def main():
         "BZ_NORTH_ONLY": False,
         "MIN_MLT": lib_dasilva2026.MIN_MLT,
         "MAX_MLT": lib_dasilva2026.MAX_MLT,
+        "SKIP_ACE": args.skip_ace,
         "DEBUG_PLOT": False,
     }
 
