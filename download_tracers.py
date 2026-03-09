@@ -58,15 +58,22 @@ def get_ead_urls(args, start_date, end_date):
     print("Crawling EAD directory list...")
 
     if args.pred_ead:
-        tok = 'pred'
-        url_tok = 'predict'
+        tok = "pred"
+        url_tok = "predict"
     else:
-        tok = 'def'
-        url_tok = 'def'
+        tok = "def"
+        url_tok = "def"
 
-    ead_dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f"SOC/{args.satellite.upper()}/ead/{url_tok}/")
+    ead_dirlist_url = os.path.join(
+        TRACERS_PORTAL_BASE_URL, f"SOC/{args.satellite.upper()}/ead/{url_tok}/"
+    )
     response = requests.get(ead_dirlist_url, auth=(args.username, args.password))
-    pattern = args.satellite.lower() + "_" + tok + "_ead_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+    pattern = (
+        args.satellite.lower()
+        + "_"
+        + tok
+        + "_ead_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+    )
     pattern_matches = re.findall(pattern, response.text)
     ead_urls = []
 
@@ -109,13 +116,9 @@ def crawl_latest_files(args, dirlist_url, pattern, start_date, end_date):
         )  # placeholder, will be overridden below
         # however, we just build the string again using the pieces
         if "aci" in dirlist_url.lower():
-            filename = (
-                f"{args.satellite.lower()}_l2_aci_ipd_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
-            )
+            filename = f"{args.satellite.lower()}_l2_aci_ipd_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
         elif "ace" in dirlist_url.lower():
-            filename = (
-                f"{args.satellite.lower()}_l2_ace_def_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
-            )
+            filename = f"{args.satellite.lower()}_l2_ace_def_{yyyy}{mm}{dd}_v{ver_maj}.{ver_min}.{ver_rev}.cdf"
         else:
             raise RuntimeError("Unknown directory type in crawl_latest_files")
 
@@ -134,8 +137,13 @@ def crawl_latest_files(args, dirlist_url, pattern, start_date, end_date):
 
 
 def get_aci_urls(args, start_date, end_date):
-    dirlist_url = os.path.join(TRACERS_PORTAL_BASE_URL, f"ACI/{args.satellite.lower()}/l2/aci/ipd/")
-    pattern = args.satellite.lower() + "_l2_aci_ipd_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+    dirlist_url = os.path.join(
+        TRACERS_PORTAL_BASE_URL, f"ACI/{args.satellite.lower()}/l2/aci/ipd/"
+    )
+    pattern = (
+        args.satellite.lower()
+        + "_l2_aci_ipd_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+    )
     return crawl_latest_files(args, dirlist_url, pattern, start_date, end_date)
 
 
@@ -152,7 +160,10 @@ def get_ace_urls(args, start_date, end_date):
             TRACERS_PORTAL_BASE_URL,
             f"ACE/{args.satellite.lower()}/l2/{crawl_month.year}/{crawl_month.month:02d}/",
         )
-        pattern = args.satellite.lower() + r"_l2_ace_def_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+        pattern = (
+            args.satellite.lower()
+            + r"_l2_ace_def_(\d{4})(\d{2})(\d{2})_v(\d+)\.(\d+)\.(\d+)\.cdf"
+        )
         ace_urls.extend(
             crawl_latest_files(args, dirlist_url, pattern, start_date, end_date)
         )
@@ -174,7 +185,9 @@ def get_parser():
     parser.add_argument("--satellite", required=True)
     parser.add_argument("--username", required=True)
     parser.add_argument("--password", required=True)
-    parser.add_argument("--pred-ead", action="store_true", help="Download predicted EAD ephemeris")
+    parser.add_argument(
+        "--pred-ead", action="store_true", help="Download predicted EAD ephemeris"
+    )
 
     return parser
 

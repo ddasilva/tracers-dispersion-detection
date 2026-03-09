@@ -49,7 +49,7 @@ class TRACERSData:
             ace_energies = None
             ace_flux = None
             ace_spect = None
-        else:            
+        else:
             ii = np.searchsorted(self.ace_time, stime)
             jj = np.searchsorted(self.ace_time, etime)
 
@@ -294,8 +294,12 @@ def get_scoring_function(
     iflux_avg_sheath = np.mean(data_subset.aci_spect.T[ch_i:ch_j, :], axis=0)
 
     if tracers_data.ace_spect is not None:
-        ch_j = tracers_data.ace_energies.searchsorted(detection_settings.max_sheath_energy)
-        eflux_avg_sheath = np.mean(data_subset.ace_spect_on_aci_times.T[:ch_j, :], axis=0)
+        ch_j = tracers_data.ace_energies.searchsorted(
+            detection_settings.max_sheath_energy
+        )
+        eflux_avg_sheath = np.mean(
+            data_subset.ace_spect_on_aci_times.T[:ch_j, :], axis=0
+        )
     else:
         eflux_avg_sheath = np.zeros_like(iflux_avg_sheath)
 
@@ -310,9 +314,11 @@ def get_scoring_function(
 
     # Build masks that zero out scoring function
     iflux_avg_sheath_mask = iflux_avg_sheath > detection_settings.min_avg_iflux_sheath
-    
+
     if tracers_data.ace_spect is not None:
-        eflux_avg_sheath_mask = eflux_avg_sheath > detection_settings.min_avg_eflux_sheath
+        eflux_avg_sheath_mask = (
+            eflux_avg_sheath > detection_settings.min_avg_eflux_sheath
+        )
     else:
         eflux_avg_sheath_mask = np.ones_like(iflux_avg_sheath_mask, dtype=bool)
 

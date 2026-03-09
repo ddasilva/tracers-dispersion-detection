@@ -19,8 +19,8 @@ def main():
     parser.add_argument("run_name")
     parser.add_argument("satellite", help="TS1 or TS2")
     parser.add_argument("--reverse-effect", action="store_true")
-    parser.add_argument('--skip-ace', action='store_true')
-    
+    parser.add_argument("--skip-ace", action="store_true")
+
     args = parser.parse_args()
 
     if args.satellite.upper() not in ("TS1", "TS2"):
