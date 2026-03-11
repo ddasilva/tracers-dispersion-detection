@@ -1,6 +1,6 @@
 TRACERS Dispersion Event Identification Software
 ---------------------------------------------
-This repository holds code and notebooks asosciated with the automated dispersion event search for use with data from the [TRACERS](https://tracers.physics.uiowa.edu/) satellites. It currently supports searches for normal (non-double or overlapping) dispersion.
+This repository holds code and notebooks associated with the automated dispersion event search for use with data from the [TRACERS](https://tracers.physics.uiowa.edu/) satellites. It currently supports searches for normal (non-double or overlapping) dispersion.
 
 Note: currently, this pulls data from the TRACERS Portal which is restricted to team members and requires a username and password for access. As more data is made public, the plan is to transition to using public data.
 
@@ -9,9 +9,9 @@ Note: currently, this pulls data from the TRACERS Portal which is restricted to 
 Code in this repository was adapted in part from [a predecessor tool for use with DMSP satellites](https://github.com/ddasilva/dmsp-dispersion-detection).
 
 * `download_tracers.py` - Download data from the [TRACERS Portal at UIowa](https://tracers-portal.physics.uiowa.edu/L2/). Run with `--help` to see options.
-* `download_omniweb.py` - Downoad data from OMNIWeb HTTP Server. Run with `--help` to see options.
-* `run_model.py` - Script to search data and plot discovered events-- you pass it a case file created with `make_case_file.py`.
-* `make_case_file.py` - Generate a case file which holds all the inputs for `run_model.py`. Edit the variables at the top of the code and re-run the script to get it to write a file.
+* `download_omniweb.py` - Download data from the OMNIWeb HTTP Server. Run with `--help` to see options.
+* `run_model.py` - Search downloaded data and optionally plot discovered events. Pass it a case file created with `make_case_file.py`.
+* `make_case_file.py` - Generate a case file containing the inputs for `run_model.py`.
 
 Literature
 * da Silva, D., et al. "Statistical Analysis of Overlapping Double Ion Energy Dispersion Events in the Northern Cusp." Frontiers in Astronomy and Space Sciences 10: 1228475. [https://doi.org/10.3389/fspas.2023.1228475](https://doi.org/10.3389/fspas.2023.1228475)
@@ -23,26 +23,31 @@ Requirements
 This code was developed by Daniel da Silva at NASA Goddard Spaceflight Center, who may be contacted at [mail@danieldasilva.org](mailto:mail@danieldasilva.org), [daniel.e.dasilva@nasa.gov](mailto:daniel.e.dasilva@nasa.gov), or [ddasilva@umbc.edu](mailto:ddasilva@umbc.edu).
 
 ## Instructions
+
 Create and activate the conda environment:
 
 `$ micromamba env create -f environment.yml`
 
 `$ micromamba activate tracers-dispersion`
 
-Now, pick a name for your run. Here, we call it `myrun`. It is going to be between December 1, 2015, and December 31, 2015, using the TS2 satellite. 
+Now, pick a name for your run. Here, we call it `myrun`. This example downloads data between December 1, 2025 and December 31, 2025 for the `TS2` satellite.
 
 Next, use these commands to download TRACERS and OMNIWeb data:
 
-`$ python download_tracers.py 12/01/2025 12/31/2025 myrun --satellite TS2`--username myusername --password mypassword
+`$ python download_tracers.py 12/01/2025 12/31/2025 myrun --satellite TS2 --username myusername --password mypassword`
 
 `$ python download_omniweb.py 12/01/2025 12/31/2025 myrun`
 
-Now, we will make a case file. This is an input file for the model to run. 
+Now, create a case file. This is the input file consumed by the model run.
 
 `$ python make_case_file.py myrun TS2`
 
-To run the code in single dispersion mode with the threshold of 0.8, use the following command. Higher threshold means less sensitive and less false positives, but you miss more real events (See da Silva JGR2022 for discussion).
+This writes `case_files/myrun.json` and points plots and CSV output into `output/myrun/`.
 
-`$ python run_model.py -i case_files/myrun_TS2.json --threshold 0.8`
+To run the code in single-dispersion mode with a threshold of `0.8`, use the following command. A higher threshold is less sensitive and usually produces fewer false positives, but it will also miss more real events (see da Silva JGR 2022 for discussion).
+
+`$ python run_model.py -i case_files/myrun.json --threshold 0.8`
+
+Add `--no-plot` if you only want the event CSV and do not want plots generated.
 
 Check the `output/` folder for plots and a CSV of detected events!
