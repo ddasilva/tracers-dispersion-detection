@@ -37,6 +37,10 @@ def main():
 def download_file(url, out_dir, args):
     os.makedirs(out_dir, exist_ok=True)
     out_path = os.path.join(out_dir, os.path.basename(url))
+
+    if os.path.exists(out_path):
+        return
+    
     response = requests.get(url, auth=(args.username, args.password))
 
     with open(out_path, "wb") as fh:
